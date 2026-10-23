@@ -34,6 +34,7 @@ public class HomeActivity extends Activity {
             return;
         }
         Ui.init(this);
+        Room.start(this);   // the phone companion's server (only in the Room TV build)
         home = new HomeView(this);
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
