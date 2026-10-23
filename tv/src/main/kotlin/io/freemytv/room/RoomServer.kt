@@ -29,7 +29,6 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.serialization.decodeFromString
-import java.time.Duration
 
 /**
  * The LAN server: bound to one private address only, and every call is checked to come from a private address too.
@@ -52,8 +51,8 @@ class RoomServer(private val host: String, private val port: Int, private val ha
 
     private fun Application.module() {
         install(WebSockets) {
-            pingPeriod = Duration.ofSeconds(20)
-            timeout = Duration.ofSeconds(40)
+            pingPeriodMillis = 20_000
+            timeoutMillis = 40_000
             maxFrameSize = 64 * 1024
         }
         install(ContentNegotiation) {
