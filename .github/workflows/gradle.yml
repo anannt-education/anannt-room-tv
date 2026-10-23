@@ -1,0 +1,40 @@
+# The Gradle modules (:protocol tests, the :tv and :phone debug APKs) on every pull request and push to main.
+# tools/check.sh (check.yml) still builds the plain Free My TV APK with build.sh.
+name: Gradle
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gradle-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gradle:
+    name: Protocol tests, TV and phone APKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew --no-daemon :protocol:test :tv:assembleDebug :phone:assembleDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apks
+          path: |
+            tv/build/outputs/apk/debug/*.apk
+            phone/build/outputs/apk/debug/*.apk
+            protocol/build/reports/tests/test/**
+          if-no-files-found: ignore

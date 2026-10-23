@@ -1,0 +1,37 @@
+<!-- Added to app/AndroidManifest.xml by tv/build.gradle.kts (generateRoomManifest). Not a manifest on its own:
+     the two marked blocks are copied in, permissions before <application>, components before </application>. -->
+<!-- permissions -->
+    <!-- Room TV: the LAN server for the phone companion runs as a foreground service so it outlives the home screen
+         (for example while Zoom is in front). FOREGROUND_SERVICE is a normal permission: nothing to grant. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<!-- /permissions -->
+<!-- components -->
+
+        <!-- Room TV: the LAN server (HTTP and WebSocket on port 8787) and the mDNS advert, in the main process. -->
+        <service
+            android:name="io.freemytv.room.RoomService"
+            android:exported="false" />
+
+        <!-- Room TV: the pairing code. From the settings (Free My TV > Pair a Phone) or, for testing,
+             adb shell am start -n io.freemytv/io.freemytv.room.PairingActivity -->
+        <activity
+            android:name="io.freemytv.room.PairingActivity"
+            android:exported="true"
+            android:label="Pair a Phone"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV: the phones that are paired, with revoke. -->
+        <activity
+            android:name="io.freemytv.room.PairedPhonesActivity"
+            android:exported="true"
+            android:label="Paired Phones"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+<!-- /components -->

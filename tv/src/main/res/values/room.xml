@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Compose screens of Room TV: a plain full-screen dark theme, nothing from the launcher's drawing code. -->
+    <style name="RoomTv" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">#070B1E</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

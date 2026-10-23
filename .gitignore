@@ -13,3 +13,13 @@ __pycache__/
 # macOS
 .DS_Store
 tools/.i18n-cache.json
+
+# Gradle (the :tv, :phone and :protocol modules)
+.gradle/
+build/
+.kotlin/
+local.properties
+.idea/
+*.iml
+*.jks
+scripts/.restore/
