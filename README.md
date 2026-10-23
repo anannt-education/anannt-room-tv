@@ -231,6 +231,23 @@ reference (fix them by hand); the others were machine-made, and corrections from
 
 No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. Your settings stay on your computer and your TV.
 
+## Anannt Room TV (this fork)
+
+This fork adds a phone companion for a room TV: pair a phone by scanning a code on the TV (*Free My TV* › *Pair a
+Phone*), then send it things over the local network (Zoom meetings and approved YouTube videos in the next
+milestones). Nothing leaves the LAN, every command is signed, and the TV's own *Original* switch is untouched. The
+brief is in [docs/BRIEF.md](docs/BRIEF.md), the map of the code in
+[docs/architecture-current.md](docs/architecture-current.md), and the on-TV checks in [docs/test-m1.md](docs/test-m1.md).
+
+Build the Room TV app and the phone app with Gradle (JDK 17, Android SDK platform 34):
+
+```bash
+./gradlew :protocol:test :tv:assembleDebug :phone:assembleDebug
+scripts/install-tv.sh <tv-ip>        # install on the TV; scripts/restore-tv.sh <tv-ip> undoes what it set
+```
+
+`./build.sh` still builds the plain launcher without the Room pieces.
+
 ## Credits
 
 - Built with [Claude Code](https://claude.com/claude-code).

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A plain placeholder icon (navy disc, blue screen, gold dot) until the brand icon is supplied. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#070B1E" android:pathData="M54,54m-54,0a54,54 0,1 1,108 0a54,54 0,1 1,-108 0" />
+    <path android:fillColor="#3B82F6" android:pathData="M26,34h56a4,4 0,0 1,4 4v30a4,4 0,0 1,-4 4H26a4,4 0,0 1,-4 -4V38a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#070B1E" android:pathData="M30,38h48v26H30z" />
+    <path android:fillColor="#D4A62A" android:pathData="M54,78m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+</vector>

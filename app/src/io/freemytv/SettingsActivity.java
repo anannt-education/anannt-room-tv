@@ -31,6 +31,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -51,6 +52,7 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         Watchdog.install(this);
         Ui.init(this);
+        Room.start(this);   // the phone companion's server (only in the Room TV build)
         view = new SettingsView(this);
         setContentView(view);
     }
@@ -214,8 +216,7 @@ public class SettingsActivity extends Activity {
                                 : freeActive() ? "Free My TV" : Ui.tr("Original");
                         return Ui.trf("Home Screen, {mode}", "mode", value);
                     }
-                    String[] names = {Ui.tr("Screensaver, preview"), Ui.tr("Home Settings"),
-                            Ui.tr("Shelf"), Ui.tr("Top Buttons"), Ui.tr("Remote Buttons"), Ui.tr("TV Settings")};
+                    String[] names = mainLabels(true);
                     return row - 1 < names.length ? names[row - 1] : "";
                 }
                 case HOME_CHOICE: {
@@ -339,9 +340,29 @@ public class SettingsActivity extends Activity {
             return HomeMode.FREE.equals(state.optString("mode")) && !state.optBoolean("homeReverted");
         }
 
+        /**
+         * The main screen's rows. The Room TV rows (Pair a Phone, Paired Phones) are there only in the Gradle build
+         * that has them (Room.available); a plain build.sh build shows the list as always.
+         */
+        private String[] mainLabels(boolean spoken) {
+            List<String> rows = new ArrayList<>();
+            if (!spoken) rows.add(Ui.tr("Home Screen"));
+            rows.add(spoken ? Ui.tr("Screensaver, preview") : Ui.tr("Screensaver"));
+            rows.add(Ui.tr("Home Settings"));
+            rows.add(Ui.tr("Shelf"));
+            rows.add(Ui.tr("Top Buttons"));
+            rows.add(Ui.tr("Remote Buttons"));
+            if (Room.available(getContext())) {
+                rows.add(Ui.tr("Pair a Phone"));
+                rows.add(Ui.tr("Paired Phones"));
+            }
+            rows.add(Ui.tr("TV Settings"));
+            return rows.toArray(new String[0]);
+        }
+
         private int rowCount() {
             switch (screen) {
-                case MAIN: return 7;
+                case MAIN: return mainLabels(false).length;
                 case HOME_CHOICE: return 2;
                 case HOME_SETTINGS: return settingLabels().length;
                 case PICKER: return Math.min(PICK_VISIBLE, pickLabels.size());
@@ -381,10 +402,11 @@ public class SettingsActivity extends Activity {
             boolean working = busy();
             String busyText = busyText();
             String mode = freeActive() ? "Free My TV" : Ui.tr("Original");
-            String[] labels = {Ui.tr("Home Screen"), Ui.tr("Screensaver"),
-                    Ui.tr("Home Settings"), Ui.tr("Shelf"), Ui.tr("Top Buttons"),
-                    Ui.tr("Remote Buttons"), Ui.tr("TV Settings")};
-            String[] values = {working ? "" : mode, Ui.tr("Preview"), "", "", "", "", ""};
+            String[] labels = mainLabels(false);
+            String[] values = new String[labels.length];
+            Arrays.fill(values, "");
+            values[0] = working ? "" : mode;
+            values[1] = Ui.tr("Preview");
             for (int i = 0; i < labels.length; i++) {
                 float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
                 rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
@@ -1047,6 +1069,10 @@ public class SettingsActivity extends Activity {
                 loadApps();
                 screen = REMOTE_KEYS;
                 focus = 0;
+            } else if (focus == 6 && Room.available(c)) {
+                Room.open(c, Room.PAIRING);
+            } else if (focus == 7 && Room.available(c)) {
+                Room.open(c, Room.PAIRED);
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
