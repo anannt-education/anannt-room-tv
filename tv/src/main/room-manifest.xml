@@ -4,6 +4,31 @@
     <!-- Room TV: the LAN server for the phone companion runs as a foreground service so it outlives the home screen
          (for example while Zoom is in front). FOREGROUND_SERVICE is a normal permission: nothing to grant. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Room TV (M2): lets the "Meeting ready" card open while another app (Zoom, YouTube) is in front. It is not
+         granted by installing: the person allows it (Settings, or `appops set io.freemytv SYSTEM_ALERT_WINDOW allow`,
+         see docs/test-m2.md). Without it the card only opens while Free My TV is the screen being shown. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Room TV (M2): package visibility for Zoom (Android 11+), so the TV can tell which Zoom app is installed and
+         whether it handles zoomus:// and https://zoom.us links. Names and link types only; no QUERY_ALL_PACKAGES. -->
+    <queries>
+        <package android:name="us.zoom.videomeetings" />
+        <package android:name="us.zoom.zrc" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="zoomus" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="zoommtg" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" android:host="zoom.us" />
+        </intent>
+    </queries>
 <!-- /permissions -->
 <!-- components -->
 
@@ -30,6 +55,18 @@
             android:exported="true"
             android:label="Paired Phones"
             android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M2): the "Meeting ready" card for a zoom.join from a paired phone. Not started by hand:
+             adb shell am start -n io.freemytv/io.freemytv.room.ZoomReadyActivity shows nothing without a pending meeting. -->
+        <activity
+            android:name="io.freemytv.room.ZoomReadyActivity"
+            android:exported="false"
+            android:label="Meeting ready"
+            android:launchMode="singleTask"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"

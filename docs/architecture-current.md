@@ -98,11 +98,38 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
 
 ## 5. Where the next milestones plug in
 
-- M2 Zoom: `RoomHandler.route` gets `zoom.join`; a `MeetingCard` Compose activity in `io.freemytv.room`; the Zoom
-  `<queries>` entries go in `room-manifest.xml`; the parser lives in `:protocol` (tested) and the phone's share target
-  in `phone/`.
+- M2 Zoom: built, see section 6.
 - M3 remote: `nav.*` commands, handled by injecting KeyEvents into our own activities only; "Return home" is
   `Intent.CATEGORY_HOME` to `HomeActivity`.
 - M4 YouTube: Room DB in `io.freemytv.room`, `yt.play` after the whitelist check, and `HomeApps.HIDDEN` for the
   YouTube tile.
 - M5: calendar on the phone, idle screen, auto-reconnect in `TvConnection`, guest QR on `HomeView`.
+
+## 6. Zoom push (M2)
+
+```
+ PHONE                                        TV
+ share sheet "Send to Room TV" (ShareActivity) ─┐
+ paste box (SendPanel)                          ├─ ZoomParser.parse(text) -> ZoomMeeting (:protocol, tested)
+                                                │
+ ZoomJoin{id, pwd, name, passcode, countdownSec} signed as `zoom.join` ──▶ RoomHandler.zoomJoin: validated() again,
+ ◀── signed `ack` {ok, detail}                    RoomRuntime.pending (memory only) ──▶ ZoomReadyActivity (the card)
+                                                  OK ──▶ ZoomLauncher.join: deep link, web link, open the app
+```
+
+- `:protocol` `Zoom.kt`: `ZoomParser` (links on zoom.us, zoomgov.com and zoom.com with any subdomain, `/j /w /wc /s`,
+  `zoommtg://` and `zoomus://`, invite text with Meeting ID and Passcode, IDs split by spaces, dots or dashes, 9 to 11
+  digits), `ZoomJoin` (`validated()` is run on both sides), `ZoomLinks` (the two public link formats), `Ack`.
+- A link's `?pwd=` token goes into the join links as it is; the short typed passcode from the invite text is only
+  shown on the card in the manual state. A personal link (`zoom.us/my/name`) has no meeting ID and is refused.
+- TV: `ZoomReadyActivity` (singleTask, not exported) reads the meeting from `RoomRuntime.pending`, never from the
+  intent, so the passcode is not in an extra or a log. `ZoomLauncher` finds the Zoom package (`us.zoom.videomeetings`,
+  `us.zoom.zrc`, else any handler of `zoomus://`), and logs only the route taken. Strings go through `RoomText.java`
+  (a public Java bridge over `Ui.tr`) so `tools/translate.py` sees them: all 25 catalogues have them.
+- Manifest additions (`tv/src/main/room-manifest.xml`): `<queries>` for the two Zoom packages and the `zoomus`,
+  `zoommtg` and `https://zoom.us` link types; `SYSTEM_ALERT_WINDOW` (not granted by installing) so the card can open
+  over another app; the card activity.
+- Phone: `ShareActivity` (ACTION_SEND text/plain, label "Send to Room TV"), `SendPanel` (paste, name, optional 10 s
+  countdown, send), `TvConnection.sendZoomJoin` (waits for the TV's ack). The optional countdown is chosen on the phone
+  and is off by default.
+- What is not verified: every route on a real TV. `docs/zoom-launch-matrix.md` and `docs/test-m2.md` are the script.

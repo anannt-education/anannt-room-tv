@@ -26,5 +26,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- "Send to Room TV" in the share sheet: text/plain with a Zoom link or invite. Reads the text only; sends
+             nothing until the person taps Send. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:label="Send to Room TV"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

@@ -3,6 +3,7 @@ package io.anannt.roomtv.phone
 import android.util.Log
 import io.anannt.roomtv.protocol.CommandSigner
 import io.anannt.roomtv.protocol.CommandVerifier
+import io.anannt.roomtv.protocol.Ack
 import io.anannt.roomtv.protocol.Commands
 import io.anannt.roomtv.protocol.Crypto
 import io.anannt.roomtv.protocol.Envelope
@@ -14,8 +15,16 @@ import io.anannt.roomtv.protocol.Pong
 import io.anannt.roomtv.protocol.ProtocolJson
 import io.anannt.roomtv.protocol.Replies
 import io.anannt.roomtv.protocol.Welcome
+import io.anannt.roomtv.protocol.ZoomJoin
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import okhttp3.OkHttpClient
@@ -36,6 +45,10 @@ sealed class Link {
 class TvConnection(private val store: PhoneStore, private val http: OkHttpClient) {
     private val _link = MutableStateFlow<Link>(Link.Off)
     val link: StateFlow<Link> get() = _link
+
+    private val _acks = MutableSharedFlow<Ack>(extraBufferCapacity = 8)
+    /** The TV's answers to commands that return no data (zoom.join). */
+    val acks: SharedFlow<Ack> get() = _acks
 
     private var socket: WebSocket? = null
     private var signer: CommandSigner? = null
@@ -97,6 +110,41 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
         return ws.send(ProtocolJson.encodeToString(s.sign(type, body)))
     }
 
+    /** Starts the link when it isn't up or on its way (the share sheet opens this app cold). */
+    fun ensureConnected() {
+        val l = _link.value
+        if (l is Link.On || l == Link.Connecting) return
+        connect()
+    }
+
+    sealed class SendResult {
+        object Sent : SendResult()
+        data class Failed(val reason: String) : SendResult()
+    }
+
+    /** Sends zoom.join and waits for the TV's ack: Sent once the TV has the card on screen. Never logs the meeting. */
+    suspend fun sendZoomJoin(join: ZoomJoin): SendResult {
+        if (store.tv.value == null) return SendResult.Failed("Not paired with a TV yet")
+        ensureConnected()
+        val up = withTimeoutOrNull(7_000) { link.first { it is Link.On || it is Link.Failed } }
+        if (up !is Link.On) return SendResult.Failed((up as? Link.Failed)?.reason ?: "Could not reach the TV")
+        val answer = coroutineScope {
+            val waiting = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeoutOrNull(6_000) { acks.first { it.command == Commands.ZOOM_JOIN } }
+            }
+            if (!send(Commands.ZOOM_JOIN, ProtocolJson.encodeToString(join))) {
+                waiting.cancel()
+                null
+            } else waiting.await()
+        }
+        return when {
+            answer == null -> SendResult.Failed("The TV didn't answer")
+            answer.ok -> SendResult.Sent
+            answer.detail == "bad-meeting" -> SendResult.Failed("The TV didn't accept that meeting ID")
+            else -> SendResult.Failed("The TV couldn't show the card. Allow it to open over other apps (see docs/test-m2.md)")
+        }
+    }
+
     fun ping(): Boolean = send(Commands.PING, ProtocolJson.encodeToString(Ping(System.currentTimeMillis())))
 
     private fun handle(text: String) {
@@ -122,6 +170,7 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
                     val current = _link.value
                     if (current is Link.On) _link.value = current.copy(rttMs = rtt)
                 }
+                Replies.ACK -> e.decodeBody<Ack>()?.let { _acks.tryEmit(it) }
                 Replies.ERROR -> Log.w(TAG, "TV error: ${e.body}")
                 else -> Log.i(TAG, "reply ${e.type}: ${e.body}")
             }

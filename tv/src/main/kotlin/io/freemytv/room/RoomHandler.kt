@@ -1,5 +1,6 @@
 package io.freemytv.room
 
+import io.anannt.roomtv.protocol.Ack
 import io.anannt.roomtv.protocol.CommandSigner
 import io.anannt.roomtv.protocol.CommandVerifier
 import io.anannt.roomtv.protocol.Commands
@@ -17,11 +18,12 @@ import io.anannt.roomtv.protocol.ProtocolJson
 import io.anannt.roomtv.protocol.Replies
 import io.anannt.roomtv.protocol.StatusBody
 import io.anannt.roomtv.protocol.Welcome
+import io.anannt.roomtv.protocol.ZoomJoin
 import kotlinx.serialization.encodeToString
 
 /**
  * What the TV does with what arrives: pairing, then signed commands. No Ktor here, so it can be driven from tests.
- * M2 adds the zoom.* commands to [route], M3 nav.*, M4 yt.* and whitelist.*.
+ * M2 added zoom.join to [route]; M3 adds nav.*, M4 yt.* and whitelist.*.
  */
 class RoomHandler(
     private val identity: TvIdentity,
@@ -29,6 +31,8 @@ class RoomHandler(
     private val tokens: PairTokenIssuer,
     private val clock: () -> Long = System::currentTimeMillis,
     private val onPaired: (PairedDevice) -> Unit = {},
+    /** Shows the "Meeting ready" card for a checked zoom.join from the named phone; false when it couldn't. */
+    private val onZoomJoin: (ZoomJoin, String) -> Boolean = { _, _ -> false },
 ) {
     private val verifier = CommandVerifier(secretFor = { devices.secretFor(it) }, clock = clock)
 
@@ -73,6 +77,14 @@ class RoomHandler(
         Commands.HELLO -> Replies.WELCOME to ProtocolJson.encodeToString(Welcome(identity.tvId, identity.name, clock()))
         Commands.PING -> Replies.PONG to ProtocolJson.encodeToString(Pong(e.decodeBody<Ping>()?.sentAt ?: 0L, clock()))
         Commands.STATUS -> Replies.STATUS to ProtocolJson.encodeToString(status())
+        Commands.ZOOM_JOIN -> Replies.ACK to ProtocolJson.encodeToString(zoomJoin(e))
         else -> Replies.ERROR to ProtocolJson.encodeToString(ErrorBody("unknown-command:" + e.type))
+    }
+
+    /** The body is checked again here (an ID of 9 to 11 digits, plain characters only) whatever the phone parsed. */
+    private fun zoomJoin(e: Envelope): Ack {
+        val join = e.decodeBody<ZoomJoin>()?.validated() ?: return Ack(Commands.ZOOM_JOIN, false, "bad-meeting")
+        val from = devices.all.value.firstOrNull { it.deviceId == e.deviceId }?.name ?: "Phone"
+        return if (onZoomJoin(join, from)) Ack(Commands.ZOOM_JOIN, true, "shown") else Ack(Commands.ZOOM_JOIN, false, "could-not-show")
     }
 }

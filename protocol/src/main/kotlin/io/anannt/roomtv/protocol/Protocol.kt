@@ -34,6 +34,7 @@ object Commands {
     const val HELLO = "hello"
     const val PING = "ping"
     const val STATUS = "status"
+    const val ZOOM_JOIN = "zoom.join"
 }
 
 /** Reply types the TV sends back. */
@@ -41,5 +42,6 @@ object Replies {
     const val WELCOME = "welcome"
     const val PONG = "pong"
     const val STATUS = "status"
+    const val ACK = "ack"
     const val ERROR = "error"
 }
