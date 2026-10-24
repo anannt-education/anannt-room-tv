@@ -34,6 +34,11 @@ class PhoneStore(c: Context) {
         get() = runCatching { Settings.Global.getString(app.contentResolver, "device_name") }.getOrNull()
             ?.takeIf { it.isNotBlank() } ?: Build.MODEL
 
+    /** The name shown in the meeting when this phone sends one. Defaults to the phone's own name. */
+    var joinName: String
+        get() = sp.getString("joinName", null)?.takeIf { it.isNotBlank() } ?: deviceName
+        set(v) { sp.edit().putString("joinName", v.trim().take(40)).apply() }
+
     private val _tv = MutableStateFlow(load())
     val tv: StateFlow<PairedTv?> get() = _tv
 

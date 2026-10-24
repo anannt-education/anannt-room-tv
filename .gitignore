@@ -23,3 +23,6 @@ local.properties
 *.iml
 *.jks
 scripts/.restore/
+
+# Room TV test screenshots (they show a meeting ID)
+shots/

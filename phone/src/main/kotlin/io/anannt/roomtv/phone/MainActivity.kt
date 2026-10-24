@@ -146,6 +146,7 @@ private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onMe
 
         Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text(if (tv == null) "Scan TV code" else "Scan a new TV code") }
         if (tv != null) {
+            SendPanel(app)
             OutlinedButton(onClick = { app.connection.connect(); onMessage(null) }, modifier = Modifier.fillMaxWidth()) { Text("Reconnect") }
             OutlinedButton(
                 onClick = { onMessage(if (app.connection.ping()) "Ping sent" else "Not connected") },

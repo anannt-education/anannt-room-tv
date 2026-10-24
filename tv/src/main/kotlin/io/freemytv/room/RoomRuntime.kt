@@ -1,12 +1,14 @@
 package io.freemytv.room
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.util.Log
 import io.anannt.roomtv.protocol.DEFAULT_PORT
 import io.anannt.roomtv.protocol.PairTokenIssuer
+import io.anannt.roomtv.protocol.ZoomJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -22,6 +24,9 @@ data class RoomState(
     val lastPairedAt: Long = 0,
     val error: String? = null,
 )
+
+/** A meeting a phone sent that nobody has joined yet. Held in memory only: the passcode is never written down. */
+data class PendingMeeting(val join: ZoomJoin, val from: String, val at: Long)
 
 /**
  * One per process: the identity, the paired phones, the token issuer, and the server plus mDNS advert, rebound
@@ -40,6 +45,9 @@ object RoomRuntime {
         private set
     val tokens = PairTokenIssuer()
 
+    private val _pending = MutableStateFlow<PendingMeeting?>(null)
+    val pending: StateFlow<PendingMeeting?> get() = _pending
+
     private var app: Context? = null
     private var handler: RoomHandler? = null
     private var server: RoomServer? = null
@@ -56,9 +64,11 @@ object RoomRuntime {
         app = a
         identity = TvIdentity.load(a)
         devices = PairedDevices(a)
-        handler = RoomHandler(identity, devices, tokens) { d ->
-            _state.update { it.copy(lastPaired = d, lastPairedAt = System.currentTimeMillis()) }
-        }
+        handler = RoomHandler(
+            identity, devices, tokens,
+            onPaired = { d -> _state.update { it.copy(lastPaired = d, lastPairedAt = System.currentTimeMillis()) } },
+            onZoomJoin = { join, from -> showMeeting(join, from) },
+        )
         val cm = a.getSystemService(ConnectivityManager::class.java)
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = rebindLater()
@@ -84,6 +94,25 @@ object RoomRuntime {
 
     /** True while the token on screen is still live (not used, not expired). */
     fun tokenLive(): Boolean = tokens.current() != null
+
+    /** Puts the "Meeting ready" card on screen for a phone's zoom.join. False when the card couldn't be started. */
+    private fun showMeeting(join: ZoomJoin, from: String): Boolean {
+        val a = app ?: return false
+        _pending.value = PendingMeeting(join, from, System.currentTimeMillis())
+        return try {
+            a.startActivity(Intent(a, ZoomReadyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: Exception) {
+            // Android 10+ can refuse an activity started from the background; the log says so (see docs/test-m2.md).
+            Log.w(TAG, "room: could not open the meeting card: ${e.javaClass.simpleName}")
+            _pending.value = null
+            false
+        }
+    }
+
+    fun clearPending() {
+        _pending.value = null
+    }
 
     private fun rebindLater() {
         executor.execute { rebind() }
