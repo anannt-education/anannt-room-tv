@@ -52,7 +52,11 @@ class Discovery(c: Context) {
     suspend fun findTv(tvId: String, timeoutMs: Long): Found? {
         start()
         return try {
-            withTimeoutOrNull(timeoutMs) { found.first { it.tvId == tvId && IPV4.matches(it.host) } }
+            withTimeoutOrNull(timeoutMs) {
+                // Each emission is the whole list of TVs seen so far: wait for one that holds ours.
+                found.first { list -> list.any { it.tvId == tvId && IPV4.matches(it.host) } }
+                    .first { it.tvId == tvId && IPV4.matches(it.host) }
+            }
         } finally {
             stop()
         }
