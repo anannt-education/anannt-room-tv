@@ -29,7 +29,7 @@ class SigningTest {
     @Test
     fun `the signature is a plain hmac over the canonical lines`() {
         val e = signer.sign("hello", """{"deviceName":"Pixel"}""")
-        val canonical = "2\nphone-1\n$now\nn0\nhello\n{\"deviceName\":\"Pixel\"}"
+        val canonical = "$PROTOCOL_VERSION\nphone-1\n$now\nn0\nhello\n{\"deviceName\":\"Pixel\"}"
         val expected = Crypto.b64url(Crypto.hmacSha256(secret, canonical.toByteArray()))
         assertEquals(expected, e.sig)
     }
