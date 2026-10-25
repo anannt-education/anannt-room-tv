@@ -59,6 +59,8 @@ final class HomeApps {
     static final int INPUTS = 7;
     /** Room TV build only: the "Videos" tile, the approved YouTube list (a screen of ours, not an app). */
     static final int ROOM_VIDEOS = 8;
+    /** Room TV build only: the "Scan to send a meeting" tile (the guest QR screen). */
+    static final int ROOM_GUEST = 9;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -137,11 +139,11 @@ final class HomeApps {
     static List<Item> shelf(Context c, boolean extract) {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
-        // Room TV build: the YouTube app is replaced by the approved list, first on the shelf.
+        // Room TV build: two of the shelf's slots are ours (Videos, second, where YouTube sits; the guest QR, last).
         boolean room = Room.available(c);
-        if (room) items.add(videosTile(c));
+        int slots = MAX_SHELF - (room ? 2 : 0);
         for (String pkg : shelfPackages(c)) {
-            if (items.size() >= MAX_SHELF) break;
+            if (items.size() >= slots) break;
             if (room && ROOM_HIDDEN.contains(pkg)) continue;
             Intent launch = launchIntent(pm, pkg);
             if (launch == null) continue;
@@ -165,6 +167,10 @@ final class HomeApps {
                 it.logoScale = Float.parseFloat(d[5]);
             }
             items.add(it);
+        }
+        if (room) {
+            items.add(Math.min(1, items.size()), videosTile(c));
+            items.add(guestTile(c));
         }
         return items;
     }
@@ -433,6 +439,39 @@ final class HomeApps {
         return it;
     }
 
+    /** The shelf's guest card: a QR-like mark (not a real code) over "Scan to send a meeting", on the same dark glass. */
+    private static synchronized Item guestTile(Context c) {
+        Item it = shortcut(ROOM_GUEST, "room-guest", Ui.tr("Scan to send a meeting"), "play");   // the symbol is unused on the shelf
+        String cacheKey = "room-guest|" + it.label;
+        Bitmap b = TILES.get(cacheKey);
+        if (b == null) {
+            b = darkTile();
+            Canvas canvas = new Canvas(b);
+            Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
+            ink.setColor(0xF2FFFFFF);
+            float cell = TILE_H * 0.026f, size = cell * 11, left = (TILE_W - size) / 2f, top = TILE_H * 0.10f;
+            float[][] finders = {{0, 0}, {7, 0}, {0, 7}};
+            for (float[] f : finders) {
+                float x = left + f[0] * cell, y = top + f[1] * cell;
+                ink.setStyle(Paint.Style.STROKE);
+                ink.setStrokeWidth(cell);
+                canvas.drawRect(x + cell / 2, y + cell / 2, x + 3.5f * cell, y + 3.5f * cell, ink);
+                ink.setStyle(Paint.Style.FILL);
+                canvas.drawRect(x + 1.5f * cell, y + 1.5f * cell, x + 2.5f * cell, y + 2.5f * cell, ink);
+            }
+            ink.setStyle(Paint.Style.FILL);
+            int[][] dots = {{5, 5}, {7, 7}, {9, 7}, {8, 8}, {10, 8}, {7, 9}, {9, 9}, {10, 10}, {5, 7}, {8, 5}};
+            for (int[] d : dots) canvas.drawRect(left + d[0] * cell, top + d[1] * cell, left + (d[0] + 1) * cell, top + (d[1] + 1) * cell, ink);
+            Paint text = Ui.text(Ui.semibold, TILE_H * 0.115f, 0xF2FFFFFF);
+            text.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText(it.label, TILE_W / 2f, TILE_H * 0.90f, text);
+            b.setHasMipMap(true);
+            TILES.put(cacheKey, b);
+        }
+        it.tile = b;
+        return it;
+    }
+
     private static Item special(Context c, int kind, String key, String label, String symbol) {
         Item it = shortcut(kind, key, label, symbol);
         it.tile = symbolTile(c, key, symbol);
@@ -465,6 +504,9 @@ final class HomeApps {
                 break;
             case ROOM_VIDEOS:
                 intent = new Intent().setClassName(a, Room.VIDEOS);
+                break;
+            case ROOM_GUEST:
+                intent = new Intent().setClassName(a, Room.GUEST);
                 break;
             default:
                 return false;

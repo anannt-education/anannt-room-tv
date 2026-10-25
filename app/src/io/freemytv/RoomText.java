@@ -51,4 +51,24 @@ public final class RoomText {
     public static String cannotPlayHere() { return Ui.tr("This video can't be played here."); }
     public static String openInYoutubeApp() { return Ui.tr("Press OK to open it in the YouTube app"); }
     public static String youtubeMissing() { return Ui.tr("The YouTube app is not installed on this TV."); }
+
+    // M5: next session on the home screen, and the guest QR
+    /** [day]: 0 today, 1 tomorrow, 2 later (see SessionDay). Times and dates in the TV's own time zone and language. */
+    public static String nextSession(String title, long startMs, int day) {
+        java.util.Date at = new java.util.Date(startMs);
+        String time = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT, Ui.locale()).format(at);
+        if (day == 0) return Ui.trf("Next session: {title} at {time}", "title", title, "time", time);
+        if (day == 1) return Ui.trf("Next session: {title} tomorrow at {time}", "title", title, "time", time);
+        String date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM, Ui.locale()).format(at);
+        return Ui.trf("Next session: {title} on {date} at {time}", "title", title, "date", date, "time", time);
+    }
+    public static String scanToSend() { return Ui.tr("Scan to send a meeting"); }
+    public static String guest() { return Ui.tr("Guest"); }
+    public static String guestNamed(String name) { return Ui.trf("{name} (guest)", "name", name); }
+    public static String guestHow() { return Ui.tr("Scan with the phone's camera. No app needed. Same Wi-Fi as this TV."); }
+    public static String guestRenews() { return Ui.tr("The code changes after each use and every few minutes."); }
+    public static String guestNoNetwork() { return Ui.tr("Guests can't send while the TV has no network."); }
+    public static String guestOff() { return Ui.tr("Guest sending is off."); }
+    public static String guestTurnOff() { return Ui.tr("Turn guest sending off"); }
+    public static String guestTurnOn() { return Ui.tr("Turn guest sending on"); }
 }

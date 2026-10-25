@@ -32,15 +32,15 @@ adb -s <tv-ip>:5555 shell pm list packages -d | grep -i youtube       # none: no
 adb -s <tv-ip>:5555 shell pm list packages | grep -i webview          # Android System WebView is needed by the player
 ```
 
-## 2. The home screen: YouTube is hidden, Videos is first
+## 2. The home screen: YouTube is hidden, Videos is second
 
-1. On the TV's home screen the first card on the shelf is **Videos** (a play symbol and the word). The YouTube card that
+1. On the TV's home screen the second card on the shelf (where YouTube sat) is **Videos** (since M5; it was first in M4) (a play symbol and the word). The YouTube card that
    Free My TV normally shows is not there.
 2. Open **All Apps**: YouTube is not in the grid. Open Free My TV > **Shelf**: YouTube is not in the list of apps to add.
 3. `adb shell pm list packages | grep -i youtube` still lists the package, and `pm list packages -d` does not: it is hidden,
    not disabled.
 4. With nothing approved, OK on **Videos** shows "No approved videos yet…" and an **Admin PIN** button.
-5. Hold OK on a shelf card to move it, and drop it: the shelf order is saved and the Videos card stays first (no crash).
+5. Hold OK on a shelf card to move it, and drop it: the shelf order is saved and the Videos card stays second (no crash).
 
 ## 3. Admin PIN on the TV
 

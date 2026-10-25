@@ -101,7 +101,7 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
 - M2 Zoom: built, see section 6.
 - M3 remote: built, see section 7.
 - M4 YouTube: built, see section 8.
-- M5: calendar on the phone, idle screen, auto-reconnect in `TvConnection`, guest QR on `HomeView`.
+- M5: built, see section 9.
 
 ## 6. Zoom push (M2)
 
@@ -187,10 +187,63 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
   on a duplicate), `AdminPin.kt` (`PrefsPinStorage`, `commit()`), `OEmbed.kt`, `VideoApproveActivity`, `VideosActivity`,
   `AdminPinActivity`, `VideoPlayerActivity`, `YouTubeApp`. Room runs through KSP; the player is
   `com.pierfrancescosoffritti.androidyoutubeplayer:core:12.1.2` (13.0.0 needs a newer compileSdk than this build uses).
-- Launcher (Java): `HomeApps.ROOM_VIDEOS` card first on the shelf, `ROOM_HIDDEN` keeps the YouTube packages out of the shelf, All
+- Launcher (Java): `HomeApps.ROOM_VIDEOS` card second on the shelf (M5; first in M4), `ROOM_HIDDEN` keeps the YouTube packages out of the shelf, All
   Apps and the shelf picker. Only in the Gradle build (`Room.available`). Nothing is disabled, so nothing needs restoring.
 - Phone: `YouTubeScreens.kt` (`YouTubeSend`, `VideosScreen`, `PinField`), `SendPanel` (Zoom first, then YouTube), `TvConnection`
   (`callAck`, `sendWhitelistAdd/Remove`, `sendYtPlay`, `refreshWhitelist`, version negotiation).
 - New permissions: none. INTERNET was already there (the player and oEmbed use it). `<queries>` now also names the two YouTube
   packages (package visibility on Android 11+, names only). No new service, receiver or exported entry that takes data.
 - Details of what this does and does not hold back: `docs/youtube-limits.md`. Test script: `docs/test-m4.md`.
+
+
+## 9. Polish (M5): today's meetings, next session, guest QR, reconnect
+
+```
+ PHONE  Today screen: READ_CALENDAR asked only here ──▶ PhoneCalendar (CalendarContract.Instances, read only)
+          ──▶ TodayMeetings.load (:protocol: day in the phone's zone, Zoom filter, ZoomParser) ──▶ one tap: zoom.join (as M2)
+          next meeting ──▶ session.next{title, startMs} | session.clear        protocol v3, signed
+ TV    RoomHandler ─▶ NextSessionRules.check (future, within 14 days) ─▶ RoomRuntime.setNext ─▶ room-home.json (filesDir)
+       :home process: HomeOverlay (a TextView along the bottom edge of the home screen) reads that file every 10 s:
+          "Next session: <title> at <time>", hidden at the start time; the main process also deletes it then.
+ Guest  home shelf, last tile "Scan to send a meeting" ─▶ GuestActivity: QR of http://<tv-ip>:8787/guest?t=<token>
+        guest phone camera ─▶ browser ─▶ GET /guest (form) ─▶ POST /guest/send {t, text, name}
+          GuestGate: size limits ─▶ rate limit (per caller, and for everybody) ─▶ GuestTokenIssuer (5 min, single use, 3 strikes)
+          ─▶ ZoomParser ─▶ busy? ─▶ redeem ─▶ RoomRuntime.showMeeting(from = guest) ─▶ the same card: OK joins, Back rejects
+```
+
+- Protocol v3 (`PROTOCOL_VERSION = 3`, floor still 1): new commands `session.next` and `session.clear` (`Commands.V3_ONLY`,
+  `Commands.minVersion`). A v1 or v2 envelope carrying them is refused with `needs-protocol-3`; every older command keeps
+  working in its own version. The QR and `/pair` still say 1. A phone speaks the lower of its version and the TV's, so a
+  v3 phone with an older TV works and just can't show a session (the Today screen says so).
+- What the TV shows of a session (`NextSession`): a title (cleaned, 80 characters at most) and a start time. Nothing else
+  crosses: no link, passcode, attendees or notes. The phone's Today screen shows the exact line before it is sent, and
+  has "Hide the title" (sends "Session"). The title is visible to anyone in the room, so that is the person's choice.
+  The Zoom link is deliberately not part of it: the home screen has nothing that could use it without a new surface.
+  The TV keeps it in `files/room-home.json` (app-private) so the :home process can draw it, and removes it at the start time.
+- Calendar: read only by construction (`CalendarSource` has one method, `instances`; the manifest has READ_CALENDAR and
+  never WRITE_CALENDAR). Instances, so recurring meetings show their occurrence for today in the phone's zone (a DST day
+  is 23 or 25 hours). Kept: timed events with a Zoom link or invite in the location, notes or title (the text must say
+  "zoom"); left out: all-day, declined, cancelled. Known limit: a link wrapped by a mail security gateway (a
+  `safelinks` redirect) is not a zoom.us link and is not found unless the invite text has "Meeting ID".
+- Guest path, and why a web page: a guest has no app and no pairing, a phone camera opens a URL everywhere, and the
+  alternative (a guest flow in the companion app) needs the app installed first. So the TV serves one small page. Trade-offs
+  accepted: plain HTTP on the LAN (as the rest of the protocol today; the token is single-use and the TV still asks OK), and
+  the page is English only. Rights: the token carries one right, `PROPOSE_MEETING`. It cannot sign a command (signing needs a
+  paired phone's secret), press a key, touch the list or the PIN. The page and its POST are LAN-only like every route, send
+  `no-store`, a CSP with no script, no referrer. A form post larger than 8 KB, or of unknown size, is not read. The TV
+  never decides to join: the card waits for OK, `countdownSec` is forced to 0, and a guest cannot push aside a card or an
+  approval question that is already on screen (`busy`). Switchable: the guest screen has a button that turns guest sending off.
+- Reconnect (phone): waits are 1, 2, 4, 8, then 15 s with jitter (`Backoff`); the second failure and then every third one
+  look the TV up again by mDNS (`PhoneApp.relocate`, `Discovery.findTv` matches the tvId, IPv4 only) and follow it to a new
+  address; the network coming back (`NetworkCallback.onAvailable`) retries at once (`TvConnection.nudge`); the home card
+  counts the seconds down and says when it is looking. Keepalive: OkHttp pings every 20 s, the app pings every 8 s and
+  drops a TV silent for 20 s, the server pings every 20 s with a 40 s timeout (all unchanged and now documented).
+- Reconnect (TV): `RoomRuntime` checks every 15 s that its server really answers (a TCP connect to its own address) and binds
+  again when it doesn't, or when an earlier start failed (before, a failed start was never retried until the network
+  changed). The service is START_STICKY, started again by the home screen and at boot, as before.
+- The optional YouTube step: `install-tv.sh --disable-youtube` (off by default) runs `pm disable-user --user 0
+  com.google.android.youtube.tv`, logs `scripts/.restore/<ip>.youtube.txt` first, and sets the TV setting
+  `anannt_room_youtube_disabled`. `HomeMode.applyOriginal` (the in-app Original) reads that setting and turns the package
+  back on, `restore-tv.sh` does the same from the computer. Only the YouTube packages in `HomeApps.ROOM_HIDDEN` are ever
+  enabled that way.
+- New permissions: phone `READ_CALENDAR` (asked on the Today screen only). TV: none. New component: `GuestActivity`.

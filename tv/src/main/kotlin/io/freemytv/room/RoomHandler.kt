@@ -8,6 +8,13 @@ import io.anannt.roomtv.protocol.CommandLimits
 import io.anannt.roomtv.protocol.Crypto
 import io.anannt.roomtv.protocol.DEFAULT_ROOM_NAME
 import io.anannt.roomtv.protocol.Envelope
+import io.anannt.roomtv.protocol.GuestGate
+import io.anannt.roomtv.protocol.GuestPage
+import io.anannt.roomtv.protocol.GuestResult
+import io.anannt.roomtv.protocol.NextSession
+import io.anannt.roomtv.protocol.NextSessionRules
+import io.anannt.roomtv.protocol.SESSION_PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.SessionResult
 import io.anannt.roomtv.protocol.ErrorBody
 import io.anannt.roomtv.protocol.NavKeyCommand
 import io.anannt.roomtv.protocol.NavResult
@@ -30,7 +37,6 @@ import io.anannt.roomtv.protocol.Whitelist
 import io.anannt.roomtv.protocol.WhitelistAdd
 import io.anannt.roomtv.protocol.WhitelistBody
 import io.anannt.roomtv.protocol.WhitelistRemove
-import io.anannt.roomtv.protocol.YOUTUBE_PROTOCOL_VERSION
 import io.anannt.roomtv.protocol.YtPlay
 import io.anannt.roomtv.protocol.YtRef
 import io.anannt.roomtv.protocol.YtResult
@@ -58,6 +64,13 @@ interface RoomActions {
     fun askApproval(ref: YtRef, from: String, deviceId: String): Boolean = false
     /** Plays an item that is on the list. The caller has already checked the list; the player checks it again. */
     fun playVideo(ref: YtRef): Done = Done(false, YtResult.FAILED)
+    /** Shows [session] on the home screen until it starts; false when it couldn't be kept. */
+    fun setNextSession(session: NextSession): Boolean = false
+    fun clearNextSession(): Boolean = false
+    /** True while a meeting card or an approval question is on screen: a guest waits rather than pushing it aside. */
+    fun busy(): Boolean = false
+    /** The label on the card for a guest's proposal: their name as typed, or "Guest" in the TV's language. */
+    fun guestLabel(name: String): String = name.ifBlank { "Guest" }
 
     companion object {
         val None = object : RoomActions {}
@@ -81,6 +94,11 @@ class RoomHandler(
     private val limits: CommandLimits = CommandLimits(clock),
     private val videos: Whitelist,
     private val pin: PinGuard,
+    private val guest: GuestGate,
+    /** Guest sending can be switched off on the TV; off, the guest page and its endpoint refuse everything. */
+    private val guestEnabled: () -> Boolean = { true },
+    /** A guest's proposal was accepted (its token is used up): the TV puts a fresh QR up. */
+    private val onGuestUsed: () -> Unit = {},
 ) {
     private val verifier = CommandVerifier(secretFor = { devices.secretFor(it) }, clock = clock)
 
@@ -142,8 +160,11 @@ class RoomHandler(
     }
 
     private fun route(e: Envelope): Pair<String, String> = when {
-        e.type in Commands.V2_ONLY && e.v < YOUTUBE_PROTOCOL_VERSION ->
-            Replies.ACK to ProtocolJson.encodeToString(Ack(e.type, false, YtResult.NEEDS_V2))
+        // A command newer than the envelope it came in: refused with the version it needs (old commands never reach this).
+        e.v < Commands.minVersion(e.type) ->
+            Replies.ACK to ProtocolJson.encodeToString(
+                Ack(e.type, false, if (Commands.minVersion(e.type) >= SESSION_PROTOCOL_VERSION) SessionResult.NEEDS_V3 else YtResult.NEEDS_V2)
+            )
         else -> routeKnown(e)
     }
 
@@ -159,6 +180,10 @@ class RoomHandler(
         Commands.WHITELIST_LIST -> Replies.WHITELIST to ProtocolJson.encodeToString(WhitelistBody(videos.items(), pin.isSet, pin.lockedForMs()))
         Commands.WHITELIST_ADD -> Replies.ACK to ProtocolJson.encodeToString(whitelistAdd(e))
         Commands.WHITELIST_REMOVE -> Replies.ACK to ProtocolJson.encodeToString(whitelistRemove(e))
+        Commands.SESSION_NEXT -> Replies.ACK to ProtocolJson.encodeToString(sessionNext(e))
+        Commands.SESSION_CLEAR -> Replies.ACK to ProtocolJson.encodeToString(
+            actions.clearNextSession().let { Ack(Commands.SESSION_CLEAR, it, if (it) SessionResult.CLEARED else YtResult.FAILED) }
+        )
         else -> Replies.ERROR to ProtocolJson.encodeToString(ErrorBody("unknown-command:" + e.type))
     }
 
@@ -167,6 +192,14 @@ class RoomHandler(
         val join = e.decodeBody<ZoomJoin>()?.validated()?.withRoomName(roomName()) ?: return Ack(Commands.ZOOM_JOIN, false, "bad-meeting")
         val from = devices.all.value.firstOrNull { it.deviceId == e.deviceId }?.name ?: "Phone"
         return if (actions.showMeeting(join, from, e.deviceId)) Ack(Commands.ZOOM_JOIN, true, "shown") else Ack(Commands.ZOOM_JOIN, false, "could-not-show")
+    }
+
+    /** session.next: the title is cleaned, the start must be in the future (and not months away), then the home screen shows it. */
+    private fun sessionNext(e: Envelope): Ack {
+        val session = e.decodeBody<NextSession>()?.cleaned() ?: return Ack(Commands.SESSION_NEXT, false, SessionResult.BAD_REQUEST)
+        NextSessionRules.check(session, clock())?.let { return Ack(Commands.SESSION_NEXT, false, it) }
+        return if (actions.setNextSession(session)) Ack(Commands.SESSION_NEXT, true, SessionResult.SHOWN)
+        else Ack(Commands.SESSION_NEXT, false, YtResult.FAILED)
     }
 
     private fun navKey(e: Envelope): Ack {
@@ -218,6 +251,58 @@ class RoomHandler(
             Log.w(TAG, "room: admin PIN wrong for $command, ${r.triesLeft} free tries left, locked ${r.lockedForMs} ms")
             Ack(command, false, if (r.lockedForMs > 0) YtResult.LOCKED else YtResult.WRONG_PIN, triesLeft = r.triesLeft, waitMs = r.lockedForMs)
         }
+    }
+
+    // MARK: - The guest path (M5)
+
+    /** A page for a browser: HTTP status and HTML. */
+    class GuestReply(val status: Int, val html: String)
+
+    /** GET /guest?t=...: the form while the token is good, else a page that says why not. The token is not used up. */
+    fun guestForm(token: String, caller: String): GuestReply {
+        if (!guestEnabled()) return refused(403, GuestResult.OFF)
+        val refusal = guest.pageState(token, caller) ?: return GuestReply(200, GuestPage.form(token, identity.name))
+        return refused(statusFor(refusal), refusal)
+    }
+
+    /**
+     * POST /guest/send: one Zoom link or invite from a guest. [GuestGate] decides (limits, token, parse, busy); a good
+     * proposal goes to the TV's card, which waits for OK there, and the token is spent. The guest gets no passcode back
+     * and no TV state beyond "sent".
+     */
+    fun guestSend(token: String, text: String, name: String, caller: String): GuestReply {
+        if (!guestEnabled()) return refused(403, GuestResult.OFF)
+        return when (val r = guest.propose(token, text, name, caller, actions.busy())) {
+            is GuestGate.Outcome.Refused -> {
+                Log.i(TAG, "room: guest proposal refused (${r.reason})")
+                // A content problem or a busy TV leaves the token live: the form comes back with the reason on top.
+                if (GuestPage.canRetry(r.reason) && GuestPage.tokenLooksRight(token)) {
+                    GuestReply(statusFor(r.reason), GuestPage.form(token, identity.name, GuestPage.noticeFor(r.reason)))
+                } else {
+                    refused(statusFor(r.reason), r.reason)
+                }
+            }
+            is GuestGate.Outcome.Proposed -> {
+                val join = r.join.withRoomName(roomName())
+                if (actions.showMeeting(join, actions.guestLabel(r.from), "")) {
+                    Log.i(TAG, "room: a guest proposed a meeting")
+                    onGuestUsed()
+                    GuestReply(200, GuestPage.sent(identity.name))
+                } else {
+                    onGuestUsed()
+                    refused(503, GuestResult.COULD_NOT_SHOW)
+                }
+            }
+        }
+    }
+
+    private fun refused(status: Int, reason: String) = GuestReply(status, GuestPage.refused(identity.name, reason))
+
+    private fun statusFor(reason: String): Int = when (reason) {
+        GuestResult.RATE_LIMITED -> 429
+        GuestResult.BUSY -> 409
+        GuestResult.BAD_MEETING, GuestResult.TOO_LONG -> 422
+        else -> 403
     }
 
     companion object {

@@ -2,10 +2,13 @@ package io.freemytv.room
 
 import android.util.Log
 import io.anannt.roomtv.protocol.Envelope
+import io.anannt.roomtv.protocol.GuestGate
+import io.anannt.roomtv.protocol.GuestPage
 import io.anannt.roomtv.protocol.ErrorBody
 import io.anannt.roomtv.protocol.PairRequest
 import io.anannt.roomtv.protocol.Paths
 import io.anannt.roomtv.protocol.ProtocolJson
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -17,8 +20,12 @@ import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.origin
+import io.ktor.server.request.contentLength
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveParameters
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -39,6 +46,8 @@ import java.util.concurrent.atomic.AtomicReference
  *   POST /command  one signed command, one signed reply
  *   WS   /control  signed commands and replies on one socket; a refused command closes it. Commands past the rate
  *                  limit are dropped without a reply. The TV also pushes signed events (zoom.state) down it.
+ *   GET  /guest?t= the guest form (M5): a tiny HTML page, no script, for the QR on the TV home
+ *   POST /guest/send  one Zoom link from a guest with a live single-use token: never a command, never a key press
  */
 class RoomServer(private val host: String, private val port: Int, private val handler: RoomHandler) {
     private var engine: ApplicationEngine? = null
@@ -96,6 +105,32 @@ class RoomServer(private val host: String, private val port: Int, private val ha
                 else if (reply.ok) call.respond(ProtocolJson.decodeFromString<Envelope>(reply.text))
                 else call.respond(HttpStatusCode.Unauthorized, ErrorBody(reply.reason))
             }
+            get(Paths.GUEST) {
+                if (!lanOnly(call)) return@get
+                val reply = handler.guestForm(call.request.queryParameters["t"].orEmpty().take(200), call.request.origin.remoteAddress)
+                respondPage(call, reply)
+            }
+            post(Paths.GUEST_SEND) {
+                if (!lanOnly(call)) return@post
+                // A form post is a few hundred bytes: anything larger, or of unknown size, is not read.
+                val size = call.request.contentLength()
+                if (size == null || size > GuestGate.MAX_BODY_BYTES) {
+                    respondPage(call, RoomHandler.GuestReply(413, GuestPage.refused(RoomRuntime.identity.name, "too-long")))
+                    return@post
+                }
+                val form = runCatching { call.receiveParameters() }.getOrNull()
+                if (form == null) {
+                    respondPage(call, RoomHandler.GuestReply(400, GuestPage.refused(RoomRuntime.identity.name, "bad-request")))
+                    return@post
+                }
+                val reply = handler.guestSend(
+                    token = form["t"].orEmpty().take(200),
+                    text = form["text"].orEmpty(),
+                    name = form["name"].orEmpty(),
+                    caller = call.request.origin.remoteAddress,
+                )
+                respondPage(call, reply)
+            }
             webSocket(Paths.CONTROL) {
                 if (!LanAddress.isPrivate(call.request.origin.remoteAddress)) {
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "lan-only"))
@@ -130,6 +165,15 @@ class RoomServer(private val host: String, private val port: Int, private val ha
                 }
             }
         }
+    }
+
+    /** The guest page: plain HTML that nothing may cache, frame, script or send anywhere else. */
+    private suspend fun respondPage(call: ApplicationCall, reply: RoomHandler.GuestReply) {
+        call.response.header("Cache-Control", "no-store")
+        call.response.header("Referrer-Policy", "no-referrer")
+        call.response.header("X-Content-Type-Options", "nosniff")
+        call.response.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        call.respondText(reply.html, ContentType.Text.Html, HttpStatusCode.fromValue(reply.status))
     }
 
     private suspend fun lanOnly(call: ApplicationCall): Boolean {

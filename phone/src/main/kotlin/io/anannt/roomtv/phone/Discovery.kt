@@ -7,7 +7,9 @@ import android.util.Log
 import io.anannt.roomtv.protocol.SERVICE_TYPE
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Finds Room TVs on this network (_anannttv._tcp), so a paired TV is found again when its address changed. */
 class Discovery(c: Context) {
@@ -42,6 +44,20 @@ class Discovery(c: Context) {
             .onFailure { Log.w(TAG, "discovery: $it"); listener = null }
     }
 
+    /**
+     * Looks for the TV with id [tvId] for up to [timeoutMs] and gives its current IPv4 address, or null. Used by the
+     * reconnect logic when the TV may have moved (a reboot, a new router lease). Use a Discovery of its own: this
+     * starts and stops the listener.
+     */
+    suspend fun findTv(tvId: String, timeoutMs: Long): Found? {
+        start()
+        return try {
+            withTimeoutOrNull(timeoutMs) { found.first { it.tvId == tvId && IPV4.matches(it.host) } }
+        } finally {
+            stop()
+        }
+    }
+
     fun stop() {
         val l = listener ?: return
         listener = null
@@ -65,5 +81,6 @@ class Discovery(c: Context) {
 
     companion object {
         private const val TAG = "RoomTV"
+        private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
     }
 }

@@ -3,7 +3,7 @@
 # person switches the home screen on the TV itself (Free My TV > Home Screen > Free My TV): that switch records what
 # it changes and is what *Original* undoes. Nothing on the TV is disabled from here.
 #
-#   scripts/install-tv.sh <tv-ip> [--apk path] [--set-home] [--pair]
+#   scripts/install-tv.sh <tv-ip> [--apk path] [--set-home] [--pair] [--disable-youtube]
 #
 #   --apk       the APK to install (default: tv/build/outputs/apk/debug/tv-debug.apk, built by
 #               ./gradlew :tv:assembleDebug)
@@ -11,20 +11,27 @@
 #               Lighter than the in-app switch (no screensaver, nothing turned off) and logged to
 #               scripts/.restore/<ip>.txt so scripts/restore-tv.sh can undo it. Prefer the switch on the TV.
 #   --pair      open the Pair a Phone screen after installing.
+#   --disable-youtube
+#               OPTIONAL, off by default. Also turns the YouTube app off (pm disable-user, never an uninstall), so the only
+#               YouTube left is the approved list. It logs the exact restore command first (scripts/.restore/<ip>.youtube.txt)
+#               and leaves a marker on the TV, so Free My TV's Original mode and scripts/restore-tv.sh both turn it back on.
+#               The restore line: adb shell pm enable com.google.android.youtube.tv
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ip="${1:-}"
-[ -n "$ip" ] || { sed -n 2,14p "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ -n "$ip" ] || { sed -n 2,18p "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 shift
 apk="tv/build/outputs/apk/debug/tv-debug.apk"
 set_home=false
 pair=false
+disable_youtube=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --apk) apk="$2"; shift 2 ;;
     --set-home) set_home=true; shift ;;
     --pair) pair=true; shift ;;
+    --disable-youtube) disable_youtube=true; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -64,6 +71,28 @@ if $set_home; then
   } > "$log"
   echo "Setting the home screen (logged to $log; undo with scripts/restore-tv.sh $ip)"
   adb -s "$target" shell cmd package set-home-activity io.freemytv/io.freemytv.HomeActivity | sed 's/^/  /'
+fi
+
+if $disable_youtube; then
+  yt=com.google.android.youtube.tv
+  if adb -s "$target" shell pm path "$yt" | tr -d '\r' | grep -q '^package:'; then
+    mkdir -p scripts/.restore
+    ytlog="scripts/.restore/$ip.youtube.txt"
+    {
+      echo "date=$(date '+%Y-%m-%d %H:%M:%S %Z')"
+      echo "tv=$brand $model Android $release"
+      echo "command_applied=pm disable-user --user 0 $yt"
+      echo "restore_command=adb -s $target shell pm enable $yt"
+      echo "marker=settings global anannt_room_youtube_disabled=$yt"
+    } > "$ytlog"
+    echo "Turning the YouTube app off (logged to $ytlog)."
+    echo "  To undo: adb -s $target shell pm enable $yt   (or Free My TV > Original, or scripts/restore-tv.sh $ip)"
+    adb -s "$target" shell pm disable-user --user 0 "$yt" | sed 's/^/  /'
+    # The marker lets the TV's own Original mode turn it back on too.
+    adb -s "$target" shell settings put global anannt_room_youtube_disabled "$yt"
+  else
+    echo "The YouTube app ($yt) is not on this TV: nothing to turn off."
+  fi
 fi
 
 if $pair; then

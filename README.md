@@ -248,6 +248,14 @@ scripts/install-tv.sh <tv-ip>        # install on the TV; scripts/restore-tv.sh 
 
 `./build.sh` still builds the plain launcher without the Room pieces.
 
+Since M5 the phone also lists today's Zoom meetings from its calendar (read only, asked for when you open that screen),
+can show the next session on the TV's home screen, and the TV's home shelf ends with a *Scan to send a meeting* tile: a
+guest scans it with the phone's camera and sends one Zoom link, which the TV shows for OK. Checks: [docs/test-m5.md](docs/test-m5.md).
+
+Optional and off by default: `scripts/install-tv.sh <tv-ip> --disable-youtube` also turns the YouTube app off, so the
+approved list is the only YouTube. It logs the restore command (`adb shell pm enable com.google.android.youtube.tv`) first,
+and both *Free My TV > Home Screen > Original* and `scripts/restore-tv.sh <tv-ip>` turn it back on.
+
 ## Credits
 
 - Built with [Claude Code](https://claude.com/claude-code).

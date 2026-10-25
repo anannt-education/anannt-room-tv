@@ -3,12 +3,12 @@ package io.anannt.roomtv.protocol
 import kotlinx.serialization.json.Json
 
 /**
- * The newest version of the signed envelope and its commands. v2 (M4) adds yt.play and whitelist.*; everything v1
- * had is unchanged, so a v1 envelope is still accepted and answered in v1 ([MIN_PROTOCOL_VERSION]). Both sides refuse
- * anything outside MIN..PROTOCOL_VERSION. A phone says hello in v1, reads the TV's [Welcome.protocol] and then speaks
- * the lower of the two.
+ * The newest version of the signed envelope and its commands. v2 (M4) adds yt.play and whitelist.*; v3 (M5) adds
+ * session.next and session.clear. Everything older is unchanged, so a v1 or v2 envelope is still accepted and answered
+ * in its own version ([MIN_PROTOCOL_VERSION]). Both sides refuse anything outside MIN..PROTOCOL_VERSION. A phone says
+ * hello in v1, reads the TV's [Welcome.protocol] and then speaks the lower of the two.
  */
-const val PROTOCOL_VERSION = 2
+const val PROTOCOL_VERSION = 3
 
 /** The oldest envelope version still accepted. */
 const val MIN_PROTOCOL_VERSION = 1
@@ -18,6 +18,9 @@ const val PAIRING_VERSION = 1
 
 /** The first version that has yt.* and whitelist.*. */
 const val YOUTUBE_PROTOCOL_VERSION = 2
+
+/** The first version that has session.next and session.clear. */
+const val SESSION_PROTOCOL_VERSION = 3
 
 /** The TV's mDNS service type and its LAN port. */
 const val SERVICE_TYPE = "_anannttv._tcp"
@@ -41,6 +44,10 @@ object Paths {
     const val PAIR = "/pair"
     const val COMMAND = "/command"
     const val CONTROL = "/control"
+
+    /** M5 guest path (plain HTTP, no app needed): GET shows a tiny form, POST /guest/send proposes one meeting. */
+    const val GUEST = "/guest"
+    const val GUEST_SEND = "/guest/send"
 }
 
 /** Command types the TV understands: M1 hello/ping/status, M2 zoom.join, M3 nav.* and zoom.open (all v1), M4 yt.play and whitelist.* (v2). */
@@ -62,8 +69,23 @@ object Commands {
     /** v2: take an item off the list. Needs the admin PIN. */
     const val WHITELIST_REMOVE = "whitelist.remove"
 
+    /** v3: the next session (title and start time) for the TV's home screen. */
+    const val SESSION_NEXT = "session.next"
+    /** v3: take the next session off the TV's home screen. */
+    const val SESSION_CLEAR = "session.clear"
+
     /** Commands a v1 envelope may not carry. */
     val V2_ONLY = setOf(YT_PLAY, WHITELIST_LIST, WHITELIST_ADD, WHITELIST_REMOVE)
+
+    /** Commands a v1 or v2 envelope may not carry. */
+    val V3_ONLY = setOf(SESSION_NEXT, SESSION_CLEAR)
+
+    /** The oldest envelope version that may carry [type]. */
+    fun minVersion(type: String): Int = when (type) {
+        in V3_ONLY -> SESSION_PROTOCOL_VERSION
+        in V2_ONLY -> YOUTUBE_PROTOCOL_VERSION
+        else -> MIN_PROTOCOL_VERSION
+    }
 }
 
 /** Reply types the TV sends back. */

@@ -419,6 +419,7 @@ final class HomeMode {
             }
             record(adb, new HashSet<>(failed));
             restoreScreensaver(adb, s);
+            restoreRoomYoutube(adb);
             try {
                 remoteService(c, adb, false);
             } catch (IOException e) {
@@ -930,6 +931,30 @@ final class HomeMode {
      * and a new install must still tell its own work from what the person had turned off (#142).
      */
     private static final String RECORD = "free_my_tv_disabled";
+
+    /**
+     * Room TV: scripts/install-tv.sh --disable-youtube turns the YouTube app off and leaves its package in this TV
+     * setting. Original turns it back on (only the packages the Room TV build hides) and clears the setting, so the
+     * one-button restore also undoes that script step. Nothing happens when the setting is not there.
+     */
+    private static final String ROOM_YOUTUBE = "anannt_room_youtube_disabled";
+
+    private static void restoreRoomYoutube(Adb adb) {
+        try {
+            String v = adb.shell("settings get global " + ROOM_YOUTUBE).trim();
+            if (v.isEmpty() || v.equals("null")) return;
+            boolean ok = true;
+            for (String pkg : v.split(",")) {
+                if (!HomeApps.ROOM_HIDDEN.contains(pkg)) continue;
+                if (!adb.shell("pm path " + pkg).contains("package:")) continue;
+                if (!adb.shell("pm enable " + pkg).contains("new state: enabled")) ok = false;
+            }
+            if (ok) adb.shell("settings delete global " + ROOM_YOUTUBE);
+            else AppLog.w("could not turn YouTube back on; scripts/restore-tv.sh does it");
+        } catch (IOException e) {
+            AppLog.w("could not turn YouTube back on: " + e.getMessage());
+        }
+    }
 
     private static Set<String> recorded(Adb adb) {
         Set<String> out = new HashSet<>();

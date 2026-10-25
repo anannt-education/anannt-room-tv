@@ -1,5 +1,6 @@
 package io.freemytv;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -18,6 +19,8 @@ final class Room {
     static final String NAME = "io.freemytv.room.RoomNameActivity";
     static final String REMOTE = "io.freemytv.room.RemoteAccessActivity";
     static final String VIDEOS = "io.freemytv.room.VideosActivity";
+    static final String GUEST = "io.freemytv.room.GuestActivity";
+    static final String OVERLAY = "io.freemytv.room.HomeOverlay";
 
     private static Boolean present;
 
@@ -40,6 +43,16 @@ final class Room {
             c.startForegroundService(new Intent().setClassName(c, SERVICE));
         } catch (Exception e) {
             AppLog.w("room service: " + e);
+        }
+    }
+
+    /** Puts the "Next session" line on the home screen (on) or stops updating it (off); nothing in a plain build. */
+    static void overlay(Activity a, boolean on) {
+        if (!available(a)) return;
+        try {
+            Class.forName(OVERLAY).getMethod(on ? "attach" : "detach", Activity.class).invoke(null, a);
+        } catch (Exception e) {
+            AppLog.w("room overlay: " + e);
         }
     }
 

@@ -39,6 +39,16 @@ class PhoneStore(c: Context) {
         get() = sp.getString("meetingName", null)?.takeIf { it.isNotBlank() } ?: ""
         set(v) { sp.edit().putString("meetingName", v.trim().take(40)).apply() }
 
+    /** Today screen: send the title as "Session" instead of the real one (the TV is on show to the whole room). */
+    var hideSessionTitle: Boolean
+        get() = sp.getBoolean("hideSessionTitle", false)
+        set(v) { sp.edit().putBoolean("hideSessionTitle", v).apply() }
+
+    /** Today screen: keep the TV's next session up to date by itself while the app is open. Off by default. */
+    var autoPushNext: Boolean
+        get() = sp.getBoolean("autoPushNext", false)
+        set(v) { sp.edit().putBoolean("autoPushNext", v).apply() }
+
     private val _tv = MutableStateFlow(load())
     val tv: StateFlow<PairedTv?> get() = _tv
 
