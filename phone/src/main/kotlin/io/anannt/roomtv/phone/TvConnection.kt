@@ -4,6 +4,10 @@ import android.util.Log
 import io.anannt.roomtv.protocol.CommandSigner
 import io.anannt.roomtv.protocol.CommandVerifier
 import io.anannt.roomtv.protocol.Ack
+import io.anannt.roomtv.protocol.Backoff
+import io.anannt.roomtv.protocol.NextSession
+import io.anannt.roomtv.protocol.SESSION_PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.SessionResult
 import io.anannt.roomtv.protocol.Commands
 import io.anannt.roomtv.protocol.Crypto
 import io.anannt.roomtv.protocol.Envelope
@@ -69,8 +73,10 @@ sealed class Link {
 
 /**
  * One WebSocket to the TV's /control: every message out is signed, every message in is verified. While the phone
- * wants a link ([connect] was called and [disconnect] wasn't) it keeps one: a dropped socket is retried after 1, 2, 4,
- * 8 and then every 15 s, and a TV that stops answering its heartbeat for 20 s counts as dropped.
+ * wants a link ([connect] was called and [disconnect] wasn't) it keeps one: a dropped socket is retried after about 1,
+ * 2, 4, 8 and then 15 s (each wait jittered, see [Backoff]), at once when the phone's network comes back ([nudge]), and
+ * a TV that stops answering its heartbeat for 20 s counts as dropped. [PhoneApp] looks the TV up again by mDNS when
+ * retries keep failing, in case its address changed.
  */
 class TvConnection(private val store: PhoneStore, private val http: OkHttpClient) {
     private val _link = MutableStateFlow<Link>(Link.Off)
@@ -104,6 +110,7 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val keyLimiter = RateLimiter(capacity = 8, perSecond = 10.0)
+    private val backoff = Backoff()
 
     private var socket: WebSocket? = null
     private var signer: CommandSigner? = null
@@ -175,6 +182,17 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
     @Synchronized
     private fun currentGeneration() = generation
 
+    /**
+     * The phone's network came back (or changed): a link that is waiting out a retry tries now instead. Does nothing
+     * for a link that is up, connecting, off or failed for good.
+     */
+    @Synchronized
+    fun nudge() {
+        if (!wantLink || _link.value !is Link.Retrying) return
+        retryJob?.cancel()
+        open()
+    }
+
     /** Stops the link and stops trying. */
     @Synchronized
     fun disconnect() {
@@ -207,7 +225,7 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
             return
         }
         attempt++
-        val wait = (1000L shl (attempt - 1).coerceAtMost(4)).coerceAtMost(MAX_RETRY_MS)
+        val wait = backoff.delayMs(attempt)
         _link.value = Link.Retrying(reason, attempt, System.currentTimeMillis() + wait)
         retryJob?.cancel()
         retryJob = scope.launch {
@@ -298,7 +316,8 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
         ensureConnected()
         val up = withTimeoutOrNull(7_000) { link.first { it is Link.On || it is Link.Failed } }
         if (up !is Link.On) return Ack(type, false, "no-link")
-        if (type in Commands.V2_ONLY && _tvProtocol.value < YOUTUBE_PROTOCOL_VERSION) return Ack(type, false, YtResult.NEEDS_V2)
+        val needs = Commands.minVersion(type)
+        if (_tvProtocol.value < needs) return Ack(type, false, if (needs >= SESSION_PROTOCOL_VERSION) SessionResult.NEEDS_V3 else YtResult.NEEDS_V2)
         val answer = coroutineScope {
             val waiting = async(start = CoroutineStart.UNDISPATCHED) {
                 withTimeoutOrNull(8_000) { acks.first { it.command == type } }
@@ -320,6 +339,15 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
 
     suspend fun sendYtPlay(ref: YtRef): Ack =
         callAck(Commands.YT_PLAY, ProtocolJson.encodeToString(YtPlay(ref.kind, ref.id)))
+
+    // MARK: - Next session (protocol v3)
+
+    /** Puts [session] on the TV's home screen (title and start time only). The ack's detail is a [SessionResult] word. */
+    suspend fun sendNextSession(session: NextSession): Ack =
+        callAck(Commands.SESSION_NEXT, ProtocolJson.encodeToString(session))
+
+    /** Takes the next session off the TV's home screen. */
+    suspend fun sendClearSession(): Ack = callAck(Commands.SESSION_CLEAR, "{}")
 
     /** Fetches the approved list; null when the TV can't be reached or doesn't speak v2. */
     suspend fun refreshWhitelist(): WhitelistBody? {
@@ -388,7 +416,6 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
 
     companion object {
         private const val TAG = "RoomTV"
-        private const val MAX_RETRY_MS = 15_000L
 
         /** Reasons the TV gives for closing that trying again will not fix. */
         private val PERMANENT = setOf(

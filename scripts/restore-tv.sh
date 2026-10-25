@@ -39,13 +39,32 @@ if adb -s "$target" shell settings get secure enabled_accessibility_services | t
   scripts/remote-access.sh "$ip" off | sed 's/^/  /' || true
 fi
 
-# M4: the YouTube app is only hidden from Free My TV's grid, never disabled. This line proves it is still enabled.
+# M5: undo install-tv.sh --disable-youtube. The marker on the TV (and the log) name the package; only the YouTube
+# packages Room TV knows are ever enabled from here.
+ytlog="scripts/.restore/$ip.youtube.txt"
+marker="$(adb -s "$target" shell settings get global anannt_room_youtube_disabled 2>/dev/null | tr -d '\r')"
+if [ -z "$marker" ] || [ "$marker" = "null" ]; then
+  marker=""
+  [ -f "$ytlog" ] && marker="$(grep '^command_applied=' "$ytlog" | sed 's/.*disable-user --user 0 //')"
+fi
+if [ -n "$marker" ]; then
+  for pkg in $(echo "$marker" | tr ',' ' '); do
+    case "$pkg" in
+      com.google.android.youtube.tv|com.google.android.youtube)
+        echo "Turning the YouTube app back on: adb shell pm enable $pkg"
+        adb -s "$target" shell pm enable "$pkg" | sed 's/^/  /' || true ;;
+      *) echo "Ignoring an unknown package in the marker: $pkg" >&2 ;;
+    esac
+  done
+  adb -s "$target" shell settings delete global anannt_room_youtube_disabled >/dev/null 2>&1 || true
+  [ -f "$ytlog" ] && mv "$ytlog" "$ytlog.restored-$(date +%Y%m%d-%H%M%S)"
+fi
 yt_off="$(adb -s "$target" shell pm list packages -d 2>/dev/null | tr -d '\r' | grep -i 'com.google.android.youtube' || true)"
 if [ -n "$yt_off" ]; then
-  echo "YouTube is DISABLED on this TV (not by Room TV): $yt_off"
+  echo "YouTube is still DISABLED on this TV: $yt_off"
   echo "  put it back with: adb -s $target shell pm enable <package>"
 else
-  echo "YouTube was never disabled by Room TV (it is only hidden from the Free My TV grid)."
+  echo "The YouTube app is enabled."
 fi
 
 echo "Now the TV's own switch: on the TV, Free My TV > Home Screen > Original (opening it for you)."

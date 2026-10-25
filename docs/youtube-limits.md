@@ -54,7 +54,7 @@ That is why the in-app player is the default and the fallback is a deliberate ch
 
 `HomeApps.ROOM_HIDDEN` (`app/src/io/freemytv/HomeApps.java`) lists `com.google.android.youtube.tv` and
 `com.google.android.youtube`. In the Room TV (Gradle) build only, the launcher leaves them out of the shelf, "All Apps" and
-Settings > Shelf, and puts a **Videos** tile first on the shelf instead (the tile opens `VideosActivity`, the approved
+Settings > Shelf, and puts a **Videos** tile second on the shelf (YouTube's old place) instead (the tile opens `VideosActivity`, the approved
 list). A plain `build.sh` build has no such list and no Videos tile.
 
 This is a filter in our own drawing code. Nothing is disabled, uninstalled or changed on the TV:

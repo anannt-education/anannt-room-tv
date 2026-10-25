@@ -99,6 +99,17 @@
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
             android:theme="@style/RoomTv" />
 
+        <!-- Room TV (M5): the guest QR ("Scan to send a meeting") from the home screen's last tile. -->
+        <activity
+            android:name="io.freemytv.room.GuestActivity"
+            android:exported="true"
+            android:label="Scan to send a meeting"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
         <!-- Room TV (M4): "Approve this video?" for a whitelist.add from a paired phone. Not started by hand. -->
         <activity
             android:name="io.freemytv.room.VideoApproveActivity"

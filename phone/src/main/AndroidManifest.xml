@@ -7,6 +7,10 @@
     <!-- Only to scan the pairing code on the TV. -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Only for the "Today's meetings" screen, which asks for it when it is opened, never before. Read only: the app
+         never holds WRITE_CALENDAR. Denying it leaves everything else working. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application

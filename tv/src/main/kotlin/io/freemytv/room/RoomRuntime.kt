@@ -8,6 +8,11 @@ import android.net.Network
 import android.util.Log
 import io.anannt.roomtv.protocol.DEFAULT_PORT
 import io.anannt.roomtv.protocol.DEFAULT_ROOM_NAME
+import io.anannt.roomtv.protocol.GuestGate
+import io.anannt.roomtv.protocol.GuestPage
+import io.anannt.roomtv.protocol.GuestTokenIssuer
+import io.anannt.roomtv.protocol.NextSession
+import io.anannt.roomtv.protocol.NextSessionRules
 import io.anannt.roomtv.protocol.PairTokenIssuer
 import io.anannt.roomtv.protocol.PinGuard
 import io.anannt.roomtv.protocol.ProtocolJson
@@ -23,7 +28,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.encodeToString
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /** What the screens show: where the server is, the token on screen, and the last phone that paired. */
 data class RoomState(
@@ -70,6 +79,19 @@ object RoomRuntime {
     lateinit var pin: PinGuard
         private set
 
+    /** The guest QR's token: one live at a time, single use, and a new one as soon as it is used or runs out. */
+    private val guestIssuer = GuestTokenIssuer()
+    private val guestGate = GuestGate(guestIssuer)
+    private const val GUEST_KEY = "guestEnabled"
+
+    private val _guest = MutableStateFlow<GuestTokenIssuer.Token?>(null)
+    /** The token behind the QR on the guest screen, or null while guest sending is off. */
+    val guest: StateFlow<GuestTokenIssuer.Token?> get() = _guest
+
+    private val _nextSession = MutableStateFlow<NextSession?>(null)
+    /** What the phone last sent to show on the home screen, until it starts. */
+    val nextSession: StateFlow<NextSession?> get() = _nextSession
+
     private val _approval = MutableStateFlow<PendingApproval?>(null)
     /** The "Approve this video?" question on screen, or null. */
     val approval: StateFlow<PendingApproval?> get() = _approval
@@ -80,11 +102,16 @@ object RoomRuntime {
 
     private var app: Context? = null
     private var handler: RoomHandler? = null
-    private var server: RoomServer? = null
+    @Volatile private var server: RoomServer? = null
     private var nsd: Nsd? = null
-    private var boundIp: String? = null
+    @Volatile private var boundIp: String? = null
     private var callback: ConnectivityManager.NetworkCallback? = null
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "room-tv") }
+
+    /** Every [HOUSEKEEPING_SECONDS]: expire the next session, keep a guest token live, check the server still answers. */
+    private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "room-tv-tick").apply { isDaemon = true } }
+    private var ticking: ScheduledFuture<*>? = null
+    private const val HOUSEKEEPING_SECONDS = 15L
 
     /** Slow or blocking work that must not queue behind the server's rebinding: oEmbed lookups, writes to the list. */
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "room-tv-io") }
@@ -105,11 +132,19 @@ object RoomRuntime {
             identity, devices, tokens,
             onPaired = { d -> _state.update { it.copy(lastPaired = d, lastPairedAt = System.currentTimeMillis()) } },
             actions = TvActions(a, probe, show = { j, f, d -> showMeeting(j, f, d) }, ended = { d -> meetingEnded(d) },
-                ask = { r, f, d -> askApproval(r, f, d) }),
+                ask = { r, f, d -> askApproval(r, f, d) }, next = { s -> setNext(s) }, isBusy = { busy() }),
             roomName = { roomName() },
             videos = videos,
             pin = pin,
+            guest = guestGate,
+            guestEnabled = { guestEnabled() },
+            onGuestUsed = { executor.execute { refreshGuest() } },
         )
+        _nextSession.value = HomeCardFile.read(a)?.takeIf { it.nextTitle.isNotEmpty() }?.let { NextSession(it.nextTitle, it.nextStartMs) }
+            ?.takeIf { NextSessionRules.showable(it, System.currentTimeMillis()) }
+        executor.execute { refreshGuest() }
+        ticking?.cancel(false)
+        ticking = ticker.scheduleWithFixedDelay({ housekeeping() }, HOUSEKEEPING_SECONDS, HOUSEKEEPING_SECONDS, TimeUnit.SECONDS)
         val cm = a.getSystemService(ConnectivityManager::class.java)
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = rebindLater()
@@ -126,8 +161,79 @@ object RoomRuntime {
         val a = app ?: return
         callback?.let { cb -> runCatching { a.getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) } }
         callback = null
+        ticking?.cancel(false)
+        ticking = null
         executor.execute { unbind() }
         app = null
+    }
+
+    // MARK: - Guest QR and next session (M5)
+
+    /** Guest sending is on unless someone turned it off on the guest screen. */
+    fun guestEnabled(): Boolean =
+        app?.getSharedPreferences("room", Context.MODE_PRIVATE)?.getBoolean(GUEST_KEY, true) ?: true
+
+    fun setGuestEnabled(on: Boolean) {
+        app?.getSharedPreferences("room", Context.MODE_PRIVATE)?.edit()?.putBoolean(GUEST_KEY, on)?.apply()
+        executor.execute { refreshGuest() }
+    }
+
+    /** What the guest's phone opens: the TV's own page, with the live token. Null off the network or with guests off. */
+    fun guestUrl(): String? {
+        val ip = _state.value.ip ?: return null
+        val t = _guest.value ?: return null
+        return GuestPage.url(ip, _state.value.port, t.value)
+    }
+
+    /** Keeps exactly one token live while guests are on, and none while they are off. */
+    @Synchronized
+    private fun refreshGuest() {
+        if (!guestEnabled()) {
+            if (_guest.value != null) {
+                guestIssuer.invalidate()
+                _guest.value = null
+            }
+            return
+        }
+        val live = guestIssuer.current()
+        if (live == null) _guest.value = guestIssuer.issue() else if (_guest.value != live) _guest.value = live
+    }
+
+    /** True while a meeting card or an approval question is on screen. */
+    private fun busy(): Boolean = _pending.value != null || _approval.value != null
+
+    /** Shows (or, with null, takes away) the next session on the home screen: kept in memory and in the home card file. */
+    private fun setNext(s: NextSession?): Boolean {
+        val a = app ?: return false
+        _nextSession.value = s
+        return HomeCardFile.write(a, if (s == null) HomeCard() else HomeCard(s.title, s.startMs))
+    }
+
+    private fun housekeeping() {
+        try {
+            _nextSession.value?.let { if (!NextSessionRules.showable(it, System.currentTimeMillis())) setNext(null) }
+            refreshGuest()
+            checkServer()
+        } catch (e: Exception) {
+            Log.w(TAG, "room: housekeeping: $e")
+        }
+    }
+
+    /**
+     * The server must answer, not only exist: a start that failed (the port still held by the process before a restart)
+     * or a listener that died is bound again here, every 15 s, until it works.
+     */
+    private fun checkServer() {
+        val ip = boundIp
+        if (server == null || ip == null) {
+            rebind()
+            return
+        }
+        val answers = runCatching { Socket().use { it.connect(InetSocketAddress(ip, PORT), 1000) }; true }.getOrDefault(false)
+        if (!answers) {
+            Log.w(TAG, "room: the server on $ip:$PORT did not answer; binding it again")
+            rebind(force = true)
+        }
     }
 
     /** A new single-use token for the QR on screen (the previous one stops working). */
@@ -283,11 +389,11 @@ object RoomRuntime {
     }
 
     @Synchronized
-    private fun rebind() {
+    private fun rebind(force: Boolean = false) {
         val a = app ?: return
         val h = handler ?: return
         val ip = LanAddress.find()
-        if (ip == boundIp && server != null) return
+        if (!force && ip == boundIp && server != null) return
         unbind()
         if (ip == null) {
             Log.w(TAG, "room: no private IPv4 address; the phone companion server is off until the TV is on Wi-Fi or Ethernet")

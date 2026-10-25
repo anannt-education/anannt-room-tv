@@ -7,12 +7,14 @@ import android.media.AudioManager
 import android.util.Log
 import android.view.KeyEvent
 import io.anannt.roomtv.protocol.NavKey
+import io.anannt.roomtv.protocol.NextSession
 import io.anannt.roomtv.protocol.NavResult
 import io.anannt.roomtv.protocol.YtRef
 import io.anannt.roomtv.protocol.YtResult
 import io.anannt.roomtv.protocol.ZoomJoin
 import io.freemytv.HomeActivity
 import io.freemytv.Nav
+import io.freemytv.RoomText
 
 /**
  * What the phone's keys do on a real TV, with only what an ordinary app may do (docs/remote-limits.md):
@@ -29,10 +31,20 @@ class TvActions(
     private val show: (ZoomJoin, String, String) -> Boolean,
     private val ended: (String) -> Unit,
     private val ask: (YtRef, String, String) -> Boolean,
+    private val next: (NextSession?) -> Boolean,
+    private val isBusy: () -> Boolean,
 ) : RoomActions {
     private val zoom = ZoomLauncher(app)
 
     override fun showMeeting(join: ZoomJoin, from: String, deviceId: String): Boolean = show(join, from, deviceId)
+
+    override fun setNextSession(session: NextSession): Boolean = next(session)
+
+    override fun clearNextSession(): Boolean = next(null)
+
+    override fun busy(): Boolean = isBusy()
+
+    override fun guestLabel(name: String): String = if (name.isBlank()) RoomText.guest() else RoomText.guestNamed(name)
 
     override fun remoteControlOn(): Boolean = RoomControlService.connected
 
