@@ -39,6 +39,15 @@ if adb -s "$target" shell settings get secure enabled_accessibility_services | t
   scripts/remote-access.sh "$ip" off | sed 's/^/  /' || true
 fi
 
+# M4: the YouTube app is only hidden from Free My TV's grid, never disabled. This line proves it is still enabled.
+yt_off="$(adb -s "$target" shell pm list packages -d 2>/dev/null | tr -d '\r' | grep -i 'com.google.android.youtube' || true)"
+if [ -n "$yt_off" ]; then
+  echo "YouTube is DISABLED on this TV (not by Room TV): $yt_off"
+  echo "  put it back with: adb -s $target shell pm enable <package>"
+else
+  echo "YouTube was never disabled by Room TV (it is only hidden from the Free My TV grid)."
+fi
+
 echo "Now the TV's own switch: on the TV, Free My TV > Home Screen > Original (opening it for you)."
 adb -s "$target" shell am start -n io.freemytv/io.freemytv.SettingsActivity >/dev/null || true
 echo "Watch it finish: adb -s $target logcat -s FreeMyTV"

@@ -164,4 +164,12 @@ object ZoomLinks {
 
 /** The TV's reply to a command that has no data to return: it was taken, or why not. */
 @Serializable
-data class Ack(val command: String, val ok: Boolean = true, val detail: String = "")
+data class Ack(
+    val command: String,
+    val ok: Boolean = true,
+    val detail: String = "",
+    /** v2, PIN answers only: free tries left before a lockout, -1 when it doesn't apply. */
+    val triesLeft: Int = -1,
+    /** v2, PIN answers only: milliseconds until the TV will check a PIN again, 0 when it will now. */
+    val waitMs: Long = 0,
+)

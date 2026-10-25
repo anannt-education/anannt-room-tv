@@ -22,7 +22,11 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Room TV (M2): package visibility for Zoom (Android 11+), so the TV can tell which Zoom app is installed and
          whether it handles zoomus:// and https://zoom.us links. Names and link types only; no QUERY_ALL_PACKAGES. -->
+    <!-- Room TV (M4): package visibility for the YouTube app, so the TV can hide it from the grid and, only for an
+         approved item, hand it a link when the in-app player refuses (docs/youtube-limits.md). Names only. -->
     <queries>
+        <package android:name="com.google.android.youtube.tv" />
+        <package android:name="com.google.android.youtube" />
         <package android:name="us.zoom.videomeetings" />
         <package android:name="us.zoom.zrc" />
         <intent>
@@ -79,6 +83,49 @@
             android:exported="false"
             android:label="Meeting ready"
             android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M4): the Videos tile on the home screen: the approved list, OK plays. -->
+        <activity
+            android:name="io.freemytv.room.VideosActivity"
+            android:exported="true"
+            android:label="Videos"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M4): "Approve this video?" for a whitelist.add from a paired phone. Not started by hand. -->
+        <activity
+            android:name="io.freemytv.room.VideoApproveActivity"
+            android:exported="false"
+            android:label="Approve"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M4): the admin PIN, set and reset on the TV itself (Videos > Admin PIN). -->
+        <activity
+            android:name="io.freemytv.room.AdminPinActivity"
+            android:exported="true"
+            android:label="Admin PIN"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M4): plays one approved video or playlist. Not exported; it checks the list again before it starts. -->
+        <activity
+            android:name="io.freemytv.room.VideoPlayerActivity"
+            android:exported="false"
+            android:label="Video"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"

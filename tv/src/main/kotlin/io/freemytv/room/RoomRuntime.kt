@@ -9,8 +9,13 @@ import android.util.Log
 import io.anannt.roomtv.protocol.DEFAULT_PORT
 import io.anannt.roomtv.protocol.DEFAULT_ROOM_NAME
 import io.anannt.roomtv.protocol.PairTokenIssuer
+import io.anannt.roomtv.protocol.PinGuard
 import io.anannt.roomtv.protocol.ProtocolJson
 import io.anannt.roomtv.protocol.Replies
+import io.anannt.roomtv.protocol.Whitelist
+import io.anannt.roomtv.protocol.WhitelistOutcome
+import io.anannt.roomtv.protocol.WhitelistResult
+import io.anannt.roomtv.protocol.YtRef
 import io.anannt.roomtv.protocol.ZoomJoin
 import io.anannt.roomtv.protocol.ZoomPhase
 import io.anannt.roomtv.protocol.ZoomState
@@ -34,6 +39,9 @@ data class RoomState(
 /** A meeting a phone sent that nobody has joined yet. Held in memory only: the passcode is never written down. */
 data class PendingMeeting(val join: ZoomJoin, val from: String, val at: Long, val deviceId: String)
 
+/** A video or playlist a phone asked to approve, waiting for OK or Back on the TV. In memory only. [info] arrives later, if it can be fetched. */
+data class PendingApproval(val ref: YtRef, val from: String, val deviceId: String, val at: Long, val info: VideoInfo? = null)
+
 /**
  * One per process: the identity, the paired phones, the token issuer, and the server plus mDNS advert, rebound
  * whenever the TV's address changes. Started by [RoomService] and by the Room screens (same main process).
@@ -55,6 +63,17 @@ object RoomRuntime {
     private val _pending = MutableStateFlow<PendingMeeting?>(null)
     val pending: StateFlow<PendingMeeting?> get() = _pending
 
+    lateinit var store: RoomWhitelistStore
+        private set
+    lateinit var videos: Whitelist
+        private set
+    lateinit var pin: PinGuard
+        private set
+
+    private val _approval = MutableStateFlow<PendingApproval?>(null)
+    /** The "Approve this video?" question on screen, or null. */
+    val approval: StateFlow<PendingApproval?> get() = _approval
+
     /** What the card and the phone-side states need to know about the front app. Optional sources, see [ForegroundProbe]. */
     lateinit var probe: ForegroundProbe
         private set
@@ -67,6 +86,9 @@ object RoomRuntime {
     private var callback: ConnectivityManager.NetworkCallback? = null
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "room-tv") }
 
+    /** Slow or blocking work that must not queue behind the server's rebinding: oEmbed lookups, writes to the list. */
+    private val io = Executors.newCachedThreadPool { r -> Thread(r, "room-tv-io") }
+
     /** Loads identity and devices right away; binds the server in the background. Safe to call many times. */
     @Synchronized
     fun start(c: Context) {
@@ -76,11 +98,17 @@ object RoomRuntime {
         identity = TvIdentity.load(a)
         devices = PairedDevices(a)
         probe = ForegroundProbe(a)
+        store = RoomWhitelistStore(VideoDatabase.get(a).dao())
+        videos = Whitelist(store)
+        pin = AdminPin.get(a)
         handler = RoomHandler(
             identity, devices, tokens,
             onPaired = { d -> _state.update { it.copy(lastPaired = d, lastPairedAt = System.currentTimeMillis()) } },
-            actions = TvActions(a, probe, show = { j, f, d -> showMeeting(j, f, d) }, ended = { d -> meetingEnded(d) }),
+            actions = TvActions(a, probe, show = { j, f, d -> showMeeting(j, f, d) }, ended = { d -> meetingEnded(d) },
+                ask = { r, f, d -> askApproval(r, f, d) }),
             roomName = { roomName() },
+            videos = videos,
+            pin = pin,
         )
         val cm = a.getSystemService(ConnectivityManager::class.java)
         val cb = object : ConnectivityManager.NetworkCallback() {
@@ -165,6 +193,78 @@ object RoomRuntime {
         }
         if (deviceId.isNotEmpty() && (pending == null || pending.deviceId != deviceId)) {
             handler?.push(deviceId, Replies.ZOOM_STATE, ProtocolJson.encodeToString(ZoomState(ZoomPhase.ENDED.wire)))
+        }
+    }
+
+    // MARK: - Approving a video or playlist (M4)
+
+    /**
+     * Puts "Approve this video?" on screen for a request from [deviceId] whose PIN was right. A newer request takes the
+     * question (the earlier phone is told it was cancelled). Title and thumbnail are fetched in the background and
+     * join the prompt if they arrive; without them it shows the ID.
+     */
+    private fun askApproval(ref: YtRef, from: String, deviceId: String): Boolean {
+        val a = app ?: return false
+        _approval.value?.let { old -> tell(old, WhitelistOutcome.CANCELLED, "") }
+        val pending = PendingApproval(ref, from, deviceId, System.currentTimeMillis())
+        _approval.value = pending
+        return try {
+            a.startActivity(Intent(a, VideoApproveActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            io.execute { fetchInfo(pending) }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "room: could not open the approval prompt: ${e.javaClass.simpleName}")
+            _approval.value = null
+            false
+        }
+    }
+
+    private fun fetchInfo(p: PendingApproval) {
+        val info = OEmbed.fetch(p.ref) ?: return
+        _approval.update { cur -> if (cur != null && cur.at == p.at) cur.copy(info = info) else cur }
+    }
+
+    /** OK (approve) or Back (reject) on the prompt. Approving adds the item to the list; the phone is told either way. */
+    fun decideApproval(approve: Boolean) {
+        val p = _approval.value ?: return
+        _approval.value = null
+        if (!approve) {
+            tell(p, WhitelistOutcome.REJECTED, "")
+            return
+        }
+        val title = p.info?.title ?: ""
+        io.execute {
+            val result = runCatching { videos.add(p.ref, title, p.from) }.getOrNull()
+            val ok = result == Whitelist.AddResult.ADDED || result == Whitelist.AddResult.DUPLICATE
+            Log.i(TAG, "room: approved ${p.ref.kind} from ${p.from}: $result")
+            tell(p, if (ok) WhitelistOutcome.APPROVED else WhitelistOutcome.CANCELLED, title)
+        }
+    }
+
+    /** The prompt closed without OK or Back (Home, another app): the question is dropped and the phone told. */
+    fun clearApproval() {
+        val p = _approval.value ?: return
+        _approval.value = null
+        tell(p, WhitelistOutcome.CANCELLED, "")
+    }
+
+    private fun tell(p: PendingApproval, outcome: WhitelistOutcome, title: String) {
+        handler?.push(p.deviceId, Replies.WHITELIST_RESULT, ProtocolJson.encodeToString(WhitelistResult(p.ref.kind, p.ref.id, outcome.wire, title)))
+    }
+
+    /** Opens the player for an item the caller has checked against the list (the player checks again). */
+    fun playVideo(ref: YtRef): Boolean {
+        val a = app ?: return false
+        return try {
+            a.startActivity(
+                Intent(a, VideoPlayerActivity::class.java)
+                    .putExtra(VideoPlayerActivity.EXTRA_KIND, ref.kind).putExtra(VideoPlayerActivity.EXTRA_ID, ref.id)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "room: could not open the player: ${e.javaClass.simpleName}")
+            false
         }
     }
 

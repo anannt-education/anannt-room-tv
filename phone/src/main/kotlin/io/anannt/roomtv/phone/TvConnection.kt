@@ -9,6 +9,16 @@ import io.anannt.roomtv.protocol.Crypto
 import io.anannt.roomtv.protocol.Envelope
 import io.anannt.roomtv.protocol.ErrorBody
 import io.anannt.roomtv.protocol.Hello
+import io.anannt.roomtv.protocol.MIN_PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.WhitelistAdd
+import io.anannt.roomtv.protocol.WhitelistBody
+import io.anannt.roomtv.protocol.WhitelistRemove
+import io.anannt.roomtv.protocol.WhitelistResult
+import io.anannt.roomtv.protocol.YOUTUBE_PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.YtPlay
+import io.anannt.roomtv.protocol.YtRef
+import io.anannt.roomtv.protocol.YtResult
 import io.anannt.roomtv.protocol.NavKey
 import io.anannt.roomtv.protocol.NavKeyCommand
 import io.anannt.roomtv.protocol.RateLimiter
@@ -78,6 +88,20 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
     /** True when the TV said, on connecting, that its optional Remote Control service is on. */
     val remoteControl: StateFlow<Boolean> get() = _remoteControl
 
+    private val _tvProtocol = MutableStateFlow(MIN_PROTOCOL_VERSION)
+    /** The envelope version in use: 1 until the TV's welcome, then the lower of this app's and the TV's. */
+    val tvProtocol: StateFlow<Int> get() = _tvProtocol
+
+    private val _whitelist = MutableStateFlow<WhitelistBody?>(null)
+    /** The last approved list the TV sent (whitelist.list), or null before one arrived. */
+    val whitelist: StateFlow<WhitelistBody?> get() = _whitelist
+
+    private val _whitelistResults = MutableSharedFlow<WhitelistResult>(extraBufferCapacity = 8)
+    /** How a whitelist.add ended on the TV (OK, Back, or dropped), pushed some time after the ack. */
+    val whitelistResults: SharedFlow<WhitelistResult> get() = _whitelistResults
+
+    private val _whitelistList = MutableSharedFlow<WhitelistBody>(extraBufferCapacity = 4)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val keyLimiter = RateLimiter(capacity = 8, perSecond = 10.0)
 
@@ -117,7 +141,9 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
         closeSocket()
         val gen = ++generation
         tvName = tv.tvName
-        signer = CommandSigner(secret, store.deviceId)
+        // The hello goes out as v1, which every TV accepts; the welcome says what the TV speaks (see handle).
+        signer = CommandSigner(secret, store.deviceId, version = MIN_PROTOCOL_VERSION)
+        _tvProtocol.value = MIN_PROTOCOL_VERSION
         verifier = CommandVerifier(secretFor = { id -> if (id == tv.tvId) secret else null })
         lastHeard = System.currentTimeMillis()
         _link.value = Link.Connecting
@@ -261,6 +287,55 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
         }
     }
 
+    // MARK: - YouTube list (protocol v2)
+
+    /**
+     * Signs and sends [type] and waits for the TV's ack of it. Never throws: a failure is an Ack with ok = false and a
+     * [YtResult] detail, or one of this phone's own: "no-tv", "no-link", "no-answer".
+     */
+    suspend fun callAck(type: String, body: String): Ack {
+        if (store.tv.value == null) return Ack(type, false, "no-tv")
+        ensureConnected()
+        val up = withTimeoutOrNull(7_000) { link.first { it is Link.On || it is Link.Failed } }
+        if (up !is Link.On) return Ack(type, false, "no-link")
+        if (type in Commands.V2_ONLY && _tvProtocol.value < YOUTUBE_PROTOCOL_VERSION) return Ack(type, false, YtResult.NEEDS_V2)
+        val answer = coroutineScope {
+            val waiting = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeoutOrNull(8_000) { acks.first { it.command == type } }
+            }
+            if (!send(type, body)) {
+                waiting.cancel()
+                null
+            } else waiting.await()
+        }
+        return answer ?: Ack(type, false, "no-answer")
+    }
+
+    /** Asks the TV to approve [ref]. The PIN travels in the signed command and is never kept here. */
+    suspend fun sendWhitelistAdd(ref: YtRef, pin: String): Ack =
+        callAck(Commands.WHITELIST_ADD, ProtocolJson.encodeToString(WhitelistAdd(ref.kind, ref.id, pin)))
+
+    suspend fun sendWhitelistRemove(ref: YtRef, pin: String): Ack =
+        callAck(Commands.WHITELIST_REMOVE, ProtocolJson.encodeToString(WhitelistRemove(ref.kind, ref.id, pin)))
+
+    suspend fun sendYtPlay(ref: YtRef): Ack =
+        callAck(Commands.YT_PLAY, ProtocolJson.encodeToString(YtPlay(ref.kind, ref.id)))
+
+    /** Fetches the approved list; null when the TV can't be reached or doesn't speak v2. */
+    suspend fun refreshWhitelist(): WhitelistBody? {
+        if (store.tv.value == null) return null
+        ensureConnected()
+        val up = withTimeoutOrNull(7_000) { link.first { it is Link.On || it is Link.Failed } }
+        if (up !is Link.On || _tvProtocol.value < YOUTUBE_PROTOCOL_VERSION) return null
+        return coroutineScope {
+            val waiting = async(start = CoroutineStart.UNDISPATCHED) { withTimeoutOrNull(8_000) { _whitelistList.first() } }
+            if (!send(Commands.WHITELIST_LIST, "{}")) {
+                waiting.cancel()
+                null
+            } else waiting.await()
+        }
+    }
+
     fun ping(): Boolean = send(Commands.PING, ProtocolJson.encodeToString(Ping(System.currentTimeMillis())))
 
     private fun handle(gen: Int, text: String) {
@@ -282,6 +357,9 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
                     val w = e.decodeBody<Welcome>()
                     attempt = 0
                     _remoteControl.value = w?.remoteControl == true
+                    val speak = minOf(PROTOCOL_VERSION, w?.protocol ?: MIN_PROTOCOL_VERSION).coerceAtLeast(MIN_PROTOCOL_VERSION)
+                    signer?.version = speak
+                    _tvProtocol.value = speak
                     _link.value = Link.On(w?.tvName ?: tvName, null)
                 }
                 Replies.PONG -> {
@@ -292,6 +370,8 @@ class TvConnection(private val store: PhoneStore, private val http: OkHttpClient
                 }
                 Replies.ACK -> e.decodeBody<Ack>()?.let { _acks.tryEmit(it) }
                 Replies.ZOOM_STATE -> e.decodeBody<ZoomState>()?.let { _zoomState.value = it }
+                Replies.WHITELIST -> e.decodeBody<WhitelistBody>()?.let { _whitelist.value = it; _whitelistList.tryEmit(it) }
+                Replies.WHITELIST_RESULT -> e.decodeBody<WhitelistResult>()?.let { _whitelistResults.tryEmit(it) }
                 Replies.ERROR -> Log.w(TAG, "TV error: ${e.body}")
                 else -> Log.i(TAG, "reply ${e.type}")
             }

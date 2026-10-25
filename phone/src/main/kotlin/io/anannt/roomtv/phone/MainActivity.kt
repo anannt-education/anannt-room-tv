@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Home, Scan, Remote }
+private enum class Screen { Home, Scan, Remote, Videos }
 
 @Composable
 fun RoomApp(app: PhoneApp) {
@@ -84,11 +84,16 @@ fun RoomApp(app: PhoneApp) {
             message = message,
             onScan = { screen = Screen.Scan },
             onRemote = { screen = Screen.Remote },
+            onVideos = { screen = Screen.Videos },
             onMessage = { message = it },
         )
         Screen.Remote -> {
             BackHandler { screen = Screen.Home }
             RemoteScreen(app, onBack = { screen = Screen.Home })
+        }
+        Screen.Videos -> {
+            BackHandler { screen = Screen.Home }
+            VideosScreen(app, onBack = { screen = Screen.Home })
         }
         Screen.Scan -> {
             BackHandler { screen = Screen.Home }
@@ -109,7 +114,7 @@ fun RoomApp(app: PhoneApp) {
 }
 
 @Composable
-private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onRemote: () -> Unit, onMessage: (String?) -> Unit) {
+private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onRemote: () -> Unit, onVideos: () -> Unit, onMessage: (String?) -> Unit) {
     val tv by app.store.tv.collectAsState()
     val link by app.connection.link.collectAsState()
     val found by app.discovery.found.collectAsState()
@@ -156,6 +161,7 @@ private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onRe
         Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text(if (tv == null) "Scan TV code" else "Scan a new TV code") }
         if (tv != null) {
             Button(onClick = onRemote, modifier = Modifier.fillMaxWidth()) { Text("Open the remote") }
+            OutlinedButton(onClick = onVideos, modifier = Modifier.fillMaxWidth()) { Text("Approved videos") }
             SendPanel(app)
             OutlinedButton(onClick = { app.connection.connect(); onMessage(null) }, modifier = Modifier.fillMaxWidth()) { Text("Reconnect") }
             OutlinedButton(

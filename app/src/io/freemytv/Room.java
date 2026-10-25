@@ -17,6 +17,7 @@ final class Room {
     static final String PAIRED = "io.freemytv.room.PairedPhonesActivity";
     static final String NAME = "io.freemytv.room.RoomNameActivity";
     static final String REMOTE = "io.freemytv.room.RemoteAccessActivity";
+    static final String VIDEOS = "io.freemytv.room.VideosActivity";
 
     private static Boolean present;
 

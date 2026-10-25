@@ -2,6 +2,7 @@ package io.anannt.roomtv.phone
 
 import io.anannt.roomtv.protocol.Crypto
 import io.anannt.roomtv.protocol.ErrorBody
+import io.anannt.roomtv.protocol.MIN_PROTOCOL_VERSION
 import io.anannt.roomtv.protocol.PROTOCOL_VERSION
 import io.anannt.roomtv.protocol.PairRequest
 import io.anannt.roomtv.protocol.PairResponse
@@ -39,7 +40,7 @@ class PairClient(private val store: PhoneStore, private val http: OkHttpClient) 
                     throw IOException(explain(reason))
                 }
                 val pr = ProtocolJson.decodeFromString<PairResponse>(text)
-                if (pr.v != PROTOCOL_VERSION) throw IOException("The TV speaks protocol v${pr.v}; this app speaks v$PROTOCOL_VERSION")
+                if (pr.v !in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION) throw IOException("The TV speaks protocol v${pr.v}; this app speaks v$PROTOCOL_VERSION")
                 if (pr.tvId != qr.tvId) throw IOException("Another TV answered")
                 val secret = Pairing.deriveSecret(qr.pairToken, clientNonce, pr.tvNonce, store.deviceId, pr.tvId)
                 if (!Pairing.confirmMatches(secret, pr.tvNonce, pr.confirm)) throw IOException("The TV's confirmation didn't match")

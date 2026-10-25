@@ -8,6 +8,8 @@ import android.util.Log
 import android.view.KeyEvent
 import io.anannt.roomtv.protocol.NavKey
 import io.anannt.roomtv.protocol.NavResult
+import io.anannt.roomtv.protocol.YtRef
+import io.anannt.roomtv.protocol.YtResult
 import io.anannt.roomtv.protocol.ZoomJoin
 import io.freemytv.HomeActivity
 import io.freemytv.Nav
@@ -26,12 +28,18 @@ class TvActions(
     private val probe: ForegroundProbe,
     private val show: (ZoomJoin, String, String) -> Boolean,
     private val ended: (String) -> Unit,
+    private val ask: (YtRef, String, String) -> Boolean,
 ) : RoomActions {
     private val zoom = ZoomLauncher(app)
 
     override fun showMeeting(join: ZoomJoin, from: String, deviceId: String): Boolean = show(join, from, deviceId)
 
     override fun remoteControlOn(): Boolean = RoomControlService.connected
+
+    override fun askApproval(ref: YtRef, from: String, deviceId: String): Boolean = ask(ref, from, deviceId)
+
+    override fun playVideo(ref: YtRef): Done =
+        if (RoomRuntime.playVideo(ref)) Done(true, YtResult.PLAYING) else Done(false, YtResult.FAILED)
 
     override fun key(key: NavKey): Done = when {
         key.isVolume -> volume(key)

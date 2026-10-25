@@ -2,8 +2,22 @@ package io.anannt.roomtv.protocol
 
 import kotlinx.serialization.json.Json
 
-/** Bumped when a message changes shape. Both sides refuse any other value. */
-const val PROTOCOL_VERSION = 1
+/**
+ * The newest version of the signed envelope and its commands. v2 (M4) adds yt.play and whitelist.*; everything v1
+ * had is unchanged, so a v1 envelope is still accepted and answered in v1 ([MIN_PROTOCOL_VERSION]). Both sides refuse
+ * anything outside MIN..PROTOCOL_VERSION. A phone says hello in v1, reads the TV's [Welcome.protocol] and then speaks
+ * the lower of the two.
+ */
+const val PROTOCOL_VERSION = 2
+
+/** The oldest envelope version still accepted. */
+const val MIN_PROTOCOL_VERSION = 1
+
+/** The QR code, POST /pair and its answer did not change in v2: they keep saying 1, so an older phone can still pair. */
+const val PAIRING_VERSION = 1
+
+/** The first version that has yt.* and whitelist.*. */
+const val YOUTUBE_PROTOCOL_VERSION = 2
 
 /** The TV's mDNS service type and its LAN port. */
 const val SERVICE_TYPE = "_anannttv._tcp"
@@ -29,7 +43,7 @@ object Paths {
     const val CONTROL = "/control"
 }
 
-/** Command types the TV understands in v1: M1 hello/ping/status, M2 zoom.join, M3 nav.* and zoom.open (M4 adds yt.* and whitelist.*). */
+/** Command types the TV understands: M1 hello/ping/status, M2 zoom.join, M3 nav.* and zoom.open (all v1), M4 yt.play and whitelist.* (v2). */
 object Commands {
     const val HELLO = "hello"
     const val PING = "ping"
@@ -38,6 +52,18 @@ object Commands {
     const val ZOOM_OPEN = "zoom.open"
     const val NAV_KEY = "nav.key"
     const val NAV_RETURN_HOME = "nav.returnHome"
+
+    /** v2: play an approved video or playlist. */
+    const val YT_PLAY = "yt.play"
+    /** v2: the approved list. No PIN: it only says what the TV already shows. */
+    const val WHITELIST_LIST = "whitelist.list"
+    /** v2: ask the TV to approve a video or playlist. Needs the admin PIN, and then OK on the TV. */
+    const val WHITELIST_ADD = "whitelist.add"
+    /** v2: take an item off the list. Needs the admin PIN. */
+    const val WHITELIST_REMOVE = "whitelist.remove"
+
+    /** Commands a v1 envelope may not carry. */
+    val V2_ONLY = setOf(YT_PLAY, WHITELIST_LIST, WHITELIST_ADD, WHITELIST_REMOVE)
 }
 
 /** Reply types the TV sends back. */
@@ -50,4 +76,10 @@ object Replies {
 
     /** Pushed by the TV, not an answer: where a zoom.join got to (see [ZoomState]). */
     const val ZOOM_STATE = "zoom.state"
+
+    /** The approved list, answering whitelist.list (see [WhitelistBody]). */
+    const val WHITELIST = "whitelist"
+
+    /** Pushed by the TV, not an answer: how a whitelist.add ended on the TV (see [WhitelistResult]). */
+    const val WHITELIST_RESULT = "whitelist.result"
 }

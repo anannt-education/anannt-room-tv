@@ -33,7 +33,7 @@ class PairingQrTest {
 
     @Test
     fun `refuses other versions, other codes and bad fields`() {
-        assertNull(PairingQr.decode(qr.copy(v = 2).encode()))
+        assertNull(PairingQr.decode(qr.copy(v = PROTOCOL_VERSION + 1).encode()))
         assertNull(PairingQr.decode("https://zoom.us/j/123"))
         assertNull(PairingQr.decode("not json"))
         assertNull(PairingQr.decode("{}"))
