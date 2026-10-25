@@ -13,6 +13,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +25,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
 import io.anannt.roomtv.protocol.ZoomJoin
 import io.anannt.roomtv.protocol.ZoomMeeting
+import io.anannt.roomtv.protocol.ZoomPhase
+import io.anannt.roomtv.protocol.ZoomState
 import io.anannt.roomtv.protocol.ZoomParser
 import kotlinx.coroutines.launch
 
@@ -38,6 +41,7 @@ fun SendPanel(app: PhoneApp, initialText: String = "", onSent: () -> Unit = {}) 
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val meeting: ZoomMeeting? = remember(text) { ZoomParser.parse(text) }
+    val zoomState by app.connection.zoomState.collectAsState()
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -69,7 +73,8 @@ fun SendPanel(app: PhoneApp, initialText: String = "", onSent: () -> Unit = {}) 
                 value = name,
                 onValueChange = { name = it.take(40) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Name in the meeting") },
+                label = { Text("Name in the meeting (optional)") },
+                placeholder = { Text("The TV uses its room name") },
                 singleLine = true,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -102,6 +107,19 @@ fun SendPanel(app: PhoneApp, initialText: String = "", onSent: () -> Unit = {}) 
                 },
             ) { Text("Send to Room TV") }
             if (status != null) Text(status!!, style = MaterialTheme.typography.bodyMedium)
+            zoomState?.let { Text(zoomStateText(it), style = MaterialTheme.typography.bodyMedium) }
         }
     }
+}
+
+/** What the TV reported about the meeting, in words. "joined" means Zoom is in front, not that the host let the room in. */
+fun zoomStateText(s: ZoomState): String = when (s.parsed()) {
+    ZoomPhase.JOINING -> "Joining… Zoom is opening on the TV."
+    ZoomPhase.JOINED -> "Zoom is open on the TV."
+    ZoomPhase.UNCONFIRMED -> "The TV handed the meeting to Zoom. It can't see the screen, so it can't confirm."
+    ZoomPhase.FALLBACK -> "Zoom didn't take the link. The meeting ID and passcode are on the TV to type."
+    ZoomPhase.FAILED -> "The TV couldn't open Zoom."
+    ZoomPhase.CANCELLED -> "Cancelled on the TV."
+    ZoomPhase.ENDED -> "The meeting was ended."
+    null -> "The TV reported: ${s.phase}"
 }

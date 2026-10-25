@@ -1,6 +1,18 @@
 <!-- Added to app/AndroidManifest.xml by tv/build.gradle.kts (generateRoomManifest). Not a manifest on its own:
      the two marked blocks are copied in, permissions before <application>, components before </application>. -->
 <!-- permissions -->
+    <!-- Room TV (M3): the key from the phone remote travels from the server (main process) to the screens in :home as a
+         broadcast to this app only. A signature permission keeps every other app out of it (before Android 13 a
+         dynamic receiver is otherwise open to all). -->
+    <permission android:name="io.freemytv.permission.ROOM_NAV" android:protectionLevel="signature" />
+    <uses-permission android:name="io.freemytv.permission.ROOM_NAV" />
+    <!-- Room TV (M3): "End meeting / return home" stops Zoom's background process once the home screen is in front, so
+         the meeting really ends. A normal permission: nothing to grant. It can only stop an app that is not in front. -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <!-- Room TV (M3, optional): lets the TV read which app is in front (a package name, nothing else) to confirm that
+         Zoom opened. Not granted by installing: `adb shell appops set io.freemytv GET_USAGE_STATS allow`, see
+         docs/remote-limits.md. Without it (and without Remote Control) the TV says "unconfirmed" instead of guessing. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
     <!-- Room TV: the LAN server for the phone companion runs as a foreground service so it outlives the home screen
          (for example while Zoom is in front). FOREGROUND_SERVICE is a normal permission: nothing to grant. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -71,4 +83,43 @@
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
             android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M3): Free My TV > Room Name. -->
+        <activity
+            android:name="io.freemytv.room.RoomNameActivity"
+            android:exported="true"
+            android:label="Room Name"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustPan"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M3): Free My TV > Remote Control, the explanation and the commands for the optional service. -->
+        <activity
+            android:name="io.freemytv.room.RemoteAccessActivity"
+            android:exported="true"
+            android:label="Remote Control"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/RoomTv" />
+
+        <!-- Room TV (M3, optional, OFF by default): presses Back, Home and the D-pad for the phone over other apps and
+             tells the TV which app is in front. No window content, no key filter, no gestures (room_control_service.xml).
+             Turn it on and off with scripts/remote-access.sh; docs/remote-limits.md has the trade-off. -->
+        <service
+            android:name="io.freemytv.room.RoomControlService"
+            android:exported="true"
+            android:label="Anannt Room TV Remote"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/room_control_service" />
+        </service>
 <!-- /components -->

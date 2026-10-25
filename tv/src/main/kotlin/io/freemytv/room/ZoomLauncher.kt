@@ -36,6 +36,9 @@ class ZoomLauncher(private val c: Context) {
             ?.takeIf { it != c.packageName }
     }
 
+    /** True for any Zoom app: the known packages and whatever handles zoomus:// on this TV. */
+    fun isZoomPackage(pkg: String): Boolean = pkg in KNOWN_PACKAGES || pkg == zoomPackage()
+
     fun join(j: ZoomJoin): Route {
         val pkg = zoomPackage()
         if (tryView(ZoomLinks.deepLink(j), pkg, "deep-link")) return finish(Route.DEEP_LINK, pkg)

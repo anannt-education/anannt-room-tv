@@ -59,6 +59,7 @@ public class SettingsActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        Nav.attach(this);   // keys from the phone remote (only in the Room TV build)
         view.resume();
         // From ADB: am start -n io.freemytv/.SettingsActivity --ez screensaver true (straight to the preview).
         if (preview == null && getIntent().getBooleanExtra("screensaver", false)) {
@@ -76,6 +77,7 @@ public class SettingsActivity extends Activity {
     @Override protected void onPause() {
         closePreview();     // before pausing the view: closing the preview resumes it (view.resume)
         view.pause();
+        Nav.detach(this);
         super.onPause();
     }
 
@@ -122,6 +124,11 @@ public class SettingsActivity extends Activity {
         // The main menu: seven rows, then the comparison, the picks (with the Watchmode credit) and two notices, all on
         // one 1080 px screen.
         private static final float MAIN_TOP = 140, ROW_H = 62, MAIN_GAP = 4;
+        // With the four Room TV rows the list has eleven, so each is a little shorter (eleven rows take less room than nine did).
+        private static final float ROOM_ROW_H = 50, ROOM_MAIN_GAP = 2;
+
+        private float mainRowH() { return Room.available(getContext()) ? ROOM_ROW_H : ROW_H; }
+        private float mainGap() { return Room.available(getContext()) ? ROOM_MAIN_GAP : MAIN_GAP; }
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
 
         private final SettingsActivity activity;
@@ -257,8 +264,8 @@ public class SettingsActivity extends Activity {
         private RectF rowBox(int row) {
             float top, height;
             if (screen == MAIN) {
-                top = MAIN_TOP + row * (ROW_H + MAIN_GAP);
-                height = ROW_H;
+                top = MAIN_TOP + row * (mainRowH() + mainGap());
+                height = mainRowH();
             } else if (screen == HOME_CHOICE) {
                 top = LIST_TOP + 20 + row * (CHOICE_H + ROW_GAP);
                 height = CHOICE_H;
@@ -341,7 +348,7 @@ public class SettingsActivity extends Activity {
         }
 
         /**
-         * The main screen's rows. The Room TV rows (Pair a Phone, Paired Phones) are there only in the Gradle build
+         * The main screen's rows. The Room TV rows (Pair a Phone, Paired Phones, Room Name, Remote Control) are there only in the Gradle build
          * that has them (Room.available); a plain build.sh build shows the list as always.
          */
         private String[] mainLabels(boolean spoken) {
@@ -355,6 +362,8 @@ public class SettingsActivity extends Activity {
             if (Room.available(getContext())) {
                 rows.add(Ui.tr("Pair a Phone"));
                 rows.add(Ui.tr("Paired Phones"));
+                rows.add(Ui.tr("Room Name"));
+                rows.add(Ui.tr("Remote Control"));
             }
             rows.add(Ui.tr("TV Settings"));
             return rows.toArray(new String[0]);
@@ -408,8 +417,8 @@ public class SettingsActivity extends Activity {
             values[0] = working ? "" : mode;
             values[1] = Ui.tr("Preview");
             for (int i = 0; i < labels.length; i++) {
-                float y = (MAIN_TOP + i * (ROW_H + MAIN_GAP)) * k;
-                rowRect.set(LIST_X * k, y, LIST_R * k, y + ROW_H * k);
+                float y = (MAIN_TOP + i * (mainRowH() + mainGap())) * k;
+                rowRect.set(LIST_X * k, y, LIST_R * k, y + mainRowH() * k);
                 float f = drawRowBackground(c, i);
                 int ink = blend(0xF2FFFFFF, INK, f);
                 rowLabel.setColor(ink);
@@ -434,7 +443,7 @@ public class SettingsActivity extends Activity {
                 }
             }
 
-            float y = (MAIN_TOP + labels.length * (ROW_H + MAIN_GAP) + 20) * k;
+            float y = (MAIN_TOP + labels.length * (mainRowH() + mainGap()) + 20) * k;
             String error = state.optString("error");
             if (working && busyText.equals(Ui.tr("Accept “Allow USB debugging?” on the TV (tick “Always allow”)."))) {
                 c.drawText(Ui.tr("On the TV: tick “Always allow” and press OK."),
@@ -1073,6 +1082,10 @@ public class SettingsActivity extends Activity {
                 Room.open(c, Room.PAIRING);
             } else if (focus == 7 && Room.available(c)) {
                 Room.open(c, Room.PAIRED);
+            } else if (focus == 8 && Room.available(c)) {
+                Room.open(c, Room.NAME);
+            } else if (focus == 9 && Room.available(c)) {
+                Room.open(c, Room.REMOTE);
             } else {
                 activity.startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }

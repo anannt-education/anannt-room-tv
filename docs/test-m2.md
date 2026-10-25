@@ -1,5 +1,11 @@
 # M2 Zoom push: how to verify it on a real TV
 
+> **Changed in M3 (this changes what steps 3 and 5 below show).** After OK the card no longer closes at once: it shows
+> "Joining Zoom…" until Zoom is in front or 20 s have passed, and the phone is told the result (`zoom.state`: joining,
+> joined, unconfirmed, fallback, failed, cancelled). The name shown in the meeting is now the room's name ("Anannt Room
+> TV", changeable on the TV at Free My TV > Room Name), not the phone's. `docs/test-m3.md` section 6 is the script for
+> both.
+
 No TV was reachable when M2 was written, so this is the script to run. Fill `docs/zoom-launch-matrix.md` as you go.
 Use a meeting you own (a Zoom you scheduled for the test); do not put a real meeting ID or passcode in the repo, in
 screenshots you commit, or in a bug report. The app never logs them.

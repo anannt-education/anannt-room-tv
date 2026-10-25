@@ -33,6 +33,12 @@ if [ -f "$log" ]; then
   mv "$log" "$log.restored-$(date +%Y%m%d-%H%M%S)"
 fi
 
+# The optional Remote Control service (M3) goes back off, with the other accessibility services left as they were.
+if adb -s "$target" shell settings get secure enabled_accessibility_services | tr -d '\r' | grep -q RoomControlService; then
+  echo "Switching Remote Control off."
+  scripts/remote-access.sh "$ip" off | sed 's/^/  /' || true
+fi
+
 echo "Now the TV's own switch: on the TV, Free My TV > Home Screen > Original (opening it for you)."
 adb -s "$target" shell am start -n io.freemytv/io.freemytv.SettingsActivity >/dev/null || true
 echo "Watch it finish: adb -s $target logcat -s FreeMyTV"

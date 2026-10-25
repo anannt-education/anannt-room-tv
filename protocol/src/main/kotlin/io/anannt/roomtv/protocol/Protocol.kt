@@ -29,12 +29,15 @@ object Paths {
     const val CONTROL = "/control"
 }
 
-/** Command types the TV understands in v1 (M1). M2 adds zoom.*, M3 nav.*, M4 yt.* and whitelist.*. */
+/** Command types the TV understands in v1: M1 hello/ping/status, M2 zoom.join, M3 nav.* and zoom.open (M4 adds yt.* and whitelist.*). */
 object Commands {
     const val HELLO = "hello"
     const val PING = "ping"
     const val STATUS = "status"
     const val ZOOM_JOIN = "zoom.join"
+    const val ZOOM_OPEN = "zoom.open"
+    const val NAV_KEY = "nav.key"
+    const val NAV_RETURN_HOME = "nav.returnHome"
 }
 
 /** Reply types the TV sends back. */
@@ -44,4 +47,7 @@ object Replies {
     const val STATUS = "status"
     const val ACK = "ack"
     const val ERROR = "error"
+
+    /** Pushed by the TV, not an answer: where a zoom.join got to (see [ZoomState]). */
+    const val ZOOM_STATE = "zoom.state"
 }

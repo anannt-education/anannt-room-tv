@@ -7,11 +7,17 @@ import android.net.LinkProperties
 import android.net.Network
 import android.util.Log
 import io.anannt.roomtv.protocol.DEFAULT_PORT
+import io.anannt.roomtv.protocol.DEFAULT_ROOM_NAME
 import io.anannt.roomtv.protocol.PairTokenIssuer
+import io.anannt.roomtv.protocol.ProtocolJson
+import io.anannt.roomtv.protocol.Replies
 import io.anannt.roomtv.protocol.ZoomJoin
+import io.anannt.roomtv.protocol.ZoomPhase
+import io.anannt.roomtv.protocol.ZoomState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.encodeToString
 import java.util.concurrent.Executors
 
 /** What the screens show: where the server is, the token on screen, and the last phone that paired. */
@@ -26,7 +32,7 @@ data class RoomState(
 )
 
 /** A meeting a phone sent that nobody has joined yet. Held in memory only: the passcode is never written down. */
-data class PendingMeeting(val join: ZoomJoin, val from: String, val at: Long)
+data class PendingMeeting(val join: ZoomJoin, val from: String, val at: Long, val deviceId: String)
 
 /**
  * One per process: the identity, the paired phones, the token issuer, and the server plus mDNS advert, rebound
@@ -35,6 +41,7 @@ data class PendingMeeting(val join: ZoomJoin, val from: String, val at: Long)
 object RoomRuntime {
     private const val TAG = "FreeMyTV"
     const val PORT = DEFAULT_PORT
+    private const val ROOM_NAME_KEY = "roomName"
 
     private val _state = MutableStateFlow(RoomState())
     val state: StateFlow<RoomState> get() = _state
@@ -47,6 +54,10 @@ object RoomRuntime {
 
     private val _pending = MutableStateFlow<PendingMeeting?>(null)
     val pending: StateFlow<PendingMeeting?> get() = _pending
+
+    /** What the card and the phone-side states need to know about the front app. Optional sources, see [ForegroundProbe]. */
+    lateinit var probe: ForegroundProbe
+        private set
 
     private var app: Context? = null
     private var handler: RoomHandler? = null
@@ -64,10 +75,12 @@ object RoomRuntime {
         app = a
         identity = TvIdentity.load(a)
         devices = PairedDevices(a)
+        probe = ForegroundProbe(a)
         handler = RoomHandler(
             identity, devices, tokens,
             onPaired = { d -> _state.update { it.copy(lastPaired = d, lastPairedAt = System.currentTimeMillis()) } },
-            onZoomJoin = { join, from -> showMeeting(join, from) },
+            actions = TvActions(a, probe, show = { j, f, d -> showMeeting(j, f, d) }, ended = { d -> meetingEnded(d) }),
+            roomName = { roomName() },
         )
         val cm = a.getSystemService(ConnectivityManager::class.java)
         val cb = object : ConnectivityManager.NetworkCallback() {
@@ -95,10 +108,23 @@ object RoomRuntime {
     /** True while the token on screen is still live (not used, not expired). */
     fun tokenLive(): Boolean = tokens.current() != null
 
+    /** The name Zoom shows for this room (Free My TV > Room Name). */
+    fun roomName(): String =
+        app?.getSharedPreferences("room", Context.MODE_PRIVATE)?.getString(ROOM_NAME_KEY, null)?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_ROOM_NAME
+
+    /** Saves the room's name; empty goes back to the default. */
+    fun setRoomName(c: Context, name: String) {
+        val clean = name.filter { !it.isISOControl() }.trim().take(40)
+        val e = c.applicationContext.getSharedPreferences("room", Context.MODE_PRIVATE).edit()
+        if (clean.isEmpty()) e.remove(ROOM_NAME_KEY) else e.putString(ROOM_NAME_KEY, clean)
+        e.apply()
+    }
+
     /** Puts the "Meeting ready" card on screen for a phone's zoom.join. False when the card couldn't be started. */
-    private fun showMeeting(join: ZoomJoin, from: String): Boolean {
+    private fun showMeeting(join: ZoomJoin, from: String, deviceId: String): Boolean {
         val a = app ?: return false
-        _pending.value = PendingMeeting(join, from, System.currentTimeMillis())
+        _pending.value?.let { reportZoom(ZoomPhase.CANCELLED, "replaced") }   // a newer meeting takes the card
+        _pending.value = PendingMeeting(join, from, System.currentTimeMillis(), deviceId)
         return try {
             a.startActivity(Intent(a, ZoomReadyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             true
@@ -110,8 +136,36 @@ object RoomRuntime {
         }
     }
 
+    /** The card is gone. A meeting that never reached an end state was cancelled on the TV. */
     fun clearPending() {
+        if (_pending.value != null) reportZoom(ZoomPhase.CANCELLED)
         _pending.value = null
+    }
+
+    private var reportedAt = 0L
+    private var reportedPhase: ZoomPhase? = null
+
+    /** Tells the phone that sent the pending meeting where it got to (zoom.state). Each phase once; nothing after an end. */
+    @Synchronized
+    fun reportZoom(phase: ZoomPhase, detail: String = "") {
+        val m = _pending.value ?: return
+        if (reportedAt == m.at && (reportedPhase == phase || reportedPhase?.isFinal == true)) return
+        reportedAt = m.at
+        reportedPhase = phase
+        handler?.push(m.deviceId, Replies.ZOOM_STATE, ProtocolJson.encodeToString(ZoomState(phase.wire, detail)))
+        Log.i(TAG, "room: zoom state ${phase.wire}${if (detail.isEmpty()) "" else " ($detail)"}")
+    }
+
+    /** "End meeting / return home" was used by [deviceId]: the card (if any) closes and that phone is told. */
+    private fun meetingEnded(deviceId: String) {
+        val pending = _pending.value
+        if (pending != null) {
+            reportZoom(ZoomPhase.ENDED)
+            _pending.value = null
+        }
+        if (deviceId.isNotEmpty() && (pending == null || pending.deviceId != deviceId)) {
+            handler?.push(deviceId, Replies.ZOOM_STATE, ProtocolJson.encodeToString(ZoomState(ZoomPhase.ENDED.wire)))
+        }
     }
 
     private fun rebindLater() {

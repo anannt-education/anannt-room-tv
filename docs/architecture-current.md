@@ -99,8 +99,7 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
 ## 5. Where the next milestones plug in
 
 - M2 Zoom: built, see section 6.
-- M3 remote: `nav.*` commands, handled by injecting KeyEvents into our own activities only; "Return home" is
-  `Intent.CATEGORY_HOME` to `HomeActivity`.
+- M3 remote: built, see section 7.
 - M4 YouTube: Room DB in `io.freemytv.room`, `yt.play` after the whitelist check, and `HomeApps.HIDDEN` for the
   YouTube tile.
 - M5: calendar on the phone, idle screen, auto-reconnect in `TvConnection`, guest QR on `HomeView`.
@@ -133,3 +132,31 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
   countdown, send), `TvConnection.sendZoomJoin` (waits for the TV's ack). The optional countdown is chosen on the phone
   and is off by default.
 - What is not verified: every route on a real TV. `docs/zoom-launch-matrix.md` and `docs/test-m2.md` are the script.
+
+## 7. Phone remote (M3)
+
+```
+ PHONE  RemoteScreen: D-pad, OK, Back, Home, volume, Open Zoom, End meeting / return home
+   nav.key{key} | nav.returnHome{endMeeting} | zoom.open        signed like every command
+   ◀── signed `ack` {ok, detail}  and pushed `zoom.state` {phase, detail}        auto-reconnect, heartbeat, state badge
+ TV   RoomHandler: verify (HMAC, 30 s, nonce) ─▶ CommandLimits (token bucket per phone; extra presses dropped silently)
+        ─▶ RoomActions = TvActions
+             keys UP/DOWN/LEFT/RIGHT/OK/BACK ─▶ Nav.send (ordered broadcast, signature permission) ─▶ the screen on show in
+                  :home or main plays it as a key press ─▶ "native"
+                  else RoomControlService.performGlobalAction ─▶ "accessibility", else "needs-remote-control"
+             volume ─▶ AudioManager (FLAG_SHOW_UI)
+             home / return home ─▶ GLOBAL_ACTION_HOME or start HomeActivity, then check with ForegroundProbe
+                  End meeting ─▶ ActivityManager.killBackgroundProcesses(Zoom)
+```
+
+- `:protocol` `Nav.kt`: `NavKey`, `NavKeyCommand`, `ReturnHome`, `NavResult` (the ack details), `ZoomPhase`/`ZoomState`,
+  `JoinWatch` (the 20 s rule), `RateLimiter`/`CommandLimits`, and the room-name default. All JVM-tested.
+- TV: `app/src/io/freemytv/Nav.java` (receiver in each screen that is on show, sender for the server), `TvActions`,
+  `RoomControlService` (optional accessibility service, off by default), `ForegroundProbe`, `RoomActivity` (base class
+  that attaches `Nav`), `RemoteAccessActivity` and `RoomNameActivity` (rows in Free My TV settings),
+  `ZoomReadyActivity` (the "Joining Zoom…" state), `RoomRuntime.reportZoom` and `RoomHandler.push` (state events down
+  the phone's own socket, signed).
+- Phone: `RemoteScreen`, `TvConnection` (retries after 1, 2, 4, 8, then every 15 s; a heartbeat every 8 s; permanent
+  failures such as a revoked phone are not retried).
+- `docs/remote-limits.md` is the honest account of what Android allows; `docs/test-m3.md` is the test script.
+

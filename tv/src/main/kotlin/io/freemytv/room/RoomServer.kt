@@ -28,14 +28,17 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The LAN server: bound to one private address only, and every call is checked to come from a private address too.
  *   GET  /status   who this TV is (no secrets)
  *   POST /pair     the pairing handshake (see Pairing in :protocol)
  *   POST /command  one signed command, one signed reply
- *   WS   /control  signed commands and replies on one socket; a refused command closes it
+ *   WS   /control  signed commands and replies on one socket; a refused command closes it. Commands past the rate
+ *                  limit are dropped without a reply. The TV also pushes signed events (zoom.state) down it.
  */
 class RoomServer(private val host: String, private val port: Int, private val handler: RoomHandler) {
     private var engine: ApplicationEngine? = null
@@ -89,7 +92,8 @@ class RoomServer(private val host: String, private val port: Int, private val ha
                     return@post
                 }
                 val reply = handler.command(e)
-                if (reply.ok) call.respond(ProtocolJson.decodeFromString<Envelope>(reply.text))
+                if (reply.silent) call.respond(HttpStatusCode.TooManyRequests, ErrorBody(reply.reason))
+                else if (reply.ok) call.respond(ProtocolJson.decodeFromString<Envelope>(reply.text))
                 else call.respond(HttpStatusCode.Unauthorized, ErrorBody(reply.reason))
             }
             webSocket(Paths.CONTROL) {
@@ -97,21 +101,32 @@ class RoomServer(private val host: String, private val port: Int, private val ha
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "lan-only"))
                     return@webSocket
                 }
-                for (frame in incoming) {
-                    if (frame !is Frame.Text) continue
-                    val e = runCatching { ProtocolJson.decodeFromString<Envelope>(frame.readText()) }.getOrNull()
-                    if (e == null) {
-                        send(Frame.Text(ProtocolJson.encodeToString(ErrorBody.serializer(), ErrorBody("bad-json"))))
-                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "bad-json"))
-                        return@webSocket
+                // The phone this socket belongs to, known after its first accepted command; the TV's own events for
+                // that phone (zoom.state) go down this socket.
+                val who = AtomicReference<String?>(null)
+                val pusher = launch {
+                    handler.pushes.collect { p -> if (p.deviceId == who.get()) send(Frame.Text(p.text)) }
+                }
+                try {
+                    for (frame in incoming) {
+                        if (frame !is Frame.Text) continue
+                        val e = runCatching { ProtocolJson.decodeFromString<Envelope>(frame.readText()) }.getOrNull()
+                        if (e == null) {
+                            send(Frame.Text(ProtocolJson.encodeToString(ErrorBody.serializer(), ErrorBody("bad-json"))))
+                            close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "bad-json"))
+                            return@webSocket
+                        }
+                        val reply = handler.command(e)
+                        if (reply.ok) who.set(e.deviceId)
+                        if (!reply.silent) send(Frame.Text(reply.text))
+                        if (!reply.ok) {
+                            Log.w(TAG, "room: command ${e.type} from ${e.deviceId} refused: ${reply.reason}")
+                            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reply.reason))
+                            return@webSocket
+                        }
                     }
-                    val reply = handler.command(e)
-                    send(Frame.Text(reply.text))
-                    if (!reply.ok) {
-                        Log.w(TAG, "room: command ${e.type} from ${e.deviceId} refused: ${reply.reason}")
-                        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, reply.reason))
-                        return@webSocket
-                    }
+                } finally {
+                    pusher.cancel()
                 }
             }
         }
