@@ -42,6 +42,7 @@ public class HomeActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        Nav.attach(this);   // keys from the phone remote (only in the Room TV build)
         if (prefsVersion != Prefs.version) {
             prefsVersion = Prefs.version;
             HomeData.get(this).settingsChanged();
@@ -52,6 +53,7 @@ public class HomeActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        Nav.detach(this);
         if (home != null) home.pause();
         super.onPause();
     }

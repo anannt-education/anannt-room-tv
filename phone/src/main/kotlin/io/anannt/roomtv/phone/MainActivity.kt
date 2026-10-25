@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Home, Scan }
+private enum class Screen { Home, Scan, Remote }
 
 @Composable
 fun RoomApp(app: PhoneApp) {
@@ -83,8 +83,13 @@ fun RoomApp(app: PhoneApp) {
             app = app,
             message = message,
             onScan = { screen = Screen.Scan },
+            onRemote = { screen = Screen.Remote },
             onMessage = { message = it },
         )
+        Screen.Remote -> {
+            BackHandler { screen = Screen.Home }
+            RemoteScreen(app, onBack = { screen = Screen.Home })
+        }
         Screen.Scan -> {
             BackHandler { screen = Screen.Home }
             ScanScreen(
@@ -104,7 +109,7 @@ fun RoomApp(app: PhoneApp) {
 }
 
 @Composable
-private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onMessage: (String?) -> Unit) {
+private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onRemote: () -> Unit, onMessage: (String?) -> Unit) {
     val tv by app.store.tv.collectAsState()
     val link by app.connection.link.collectAsState()
     val found by app.discovery.found.collectAsState()
@@ -132,6 +137,10 @@ private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onMe
                         Link.Connecting -> {
                             Text("Connecting to ${current.tvName}…", style = MaterialTheme.typography.titleMedium)
                         }
+                        is Link.Retrying -> {
+                            Text("Reconnecting to ${current.tvName}…", style = MaterialTheme.typography.titleMedium)
+                            Text(l.reason, style = MaterialTheme.typography.bodyMedium)
+                        }
                         is Link.Failed -> {
                             Text("Not connected to ${current.tvName}", style = MaterialTheme.typography.titleMedium)
                             Text(l.reason, style = MaterialTheme.typography.bodyMedium)
@@ -146,6 +155,7 @@ private fun HomeScreen(app: PhoneApp, message: String?, onScan: () -> Unit, onMe
 
         Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text(if (tv == null) "Scan TV code" else "Scan a new TV code") }
         if (tv != null) {
+            Button(onClick = onRemote, modifier = Modifier.fillMaxWidth()) { Text("Open the remote") }
             SendPanel(app)
             OutlinedButton(onClick = { app.connection.connect(); onMessage(null) }, modifier = Modifier.fillMaxWidth()) { Text("Reconnect") }
             OutlinedButton(

@@ -15,6 +15,8 @@ final class Room {
     static final String SERVICE = "io.freemytv.room.RoomService";
     static final String PAIRING = "io.freemytv.room.PairingActivity";
     static final String PAIRED = "io.freemytv.room.PairedPhonesActivity";
+    static final String NAME = "io.freemytv.room.RoomNameActivity";
+    static final String REMOTE = "io.freemytv.room.RemoteAccessActivity";
 
     private static Boolean present;
 
@@ -40,7 +42,7 @@ final class Room {
         }
     }
 
-    /** Opens one of the Room screens (PAIRING or PAIRED). */
+    /** Opens one of the Room screens (PAIRING, PAIRED, NAME or REMOTE). */
     static void open(Context c, String activity) {
         try {
             c.startActivity(new Intent().setClassName(c, activity).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

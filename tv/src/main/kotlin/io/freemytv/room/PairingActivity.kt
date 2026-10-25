@@ -2,7 +2,6 @@ package io.freemytv.room
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -41,7 +40,7 @@ import io.anannt.roomtv.protocol.PairingQr
 import kotlinx.coroutines.delay
 
 /** Free My TV > Pair a Phone: the QR the phone scans, renewed every two minutes and after each pairing. */
-class PairingActivity : ComponentActivity() {
+class PairingActivity : RoomActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RoomRuntime.start(this)

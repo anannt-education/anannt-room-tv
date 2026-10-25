@@ -1,7 +1,6 @@
 package io.freemytv.room
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +36,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /** Free My TV > Paired Phones: every phone that can send commands, each with Revoke (press twice). */
-class PairedPhonesActivity : ComponentActivity() {
+class PairedPhonesActivity : RoomActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RoomRuntime.start(this)

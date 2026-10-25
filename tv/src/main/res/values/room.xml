@@ -5,4 +5,6 @@
         <item name="android:windowBackground">#070B1E</item>
         <item name="android:windowFullscreen">true</item>
     </style>
+    <!-- Shown by Android where accessibility services are listed (Settings > Accessibility). -->
+    <string name="room_control_service">Lets the Anannt Room TV phone app press Back, Home and the arrow keys while another app is open. It does not read the screen.</string>
 </resources>

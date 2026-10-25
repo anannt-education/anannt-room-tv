@@ -79,7 +79,13 @@ data class Envelope(
 data class Hello(val deviceName: String, val app: String = "anannt-room-phone")
 
 @Serializable
-data class Welcome(val tvId: String, val tvName: String, val serverTime: Long)
+data class Welcome(
+    val tvId: String,
+    val tvName: String,
+    val serverTime: Long,
+    /** True when the TV's optional Remote Control service is on, so Back, Home and the D-pad reach other apps. */
+    val remoteControl: Boolean = false,
+)
 
 @Serializable
 data class Ping(val sentAt: Long)
