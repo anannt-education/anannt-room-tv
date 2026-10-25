@@ -95,7 +95,7 @@ class VideoPlayerActivity : RoomActivity() {
         keepOnThisPage(view)
 
         val playlist = ref.parsedKind == YtKind.PLAYLIST
-        val options = IFramePlayerOptions.Builder(this)
+        val options = IFramePlayerOptions.Builder()
             .controls(0)
             .rel(0)
             .ivLoadPolicy(3)
