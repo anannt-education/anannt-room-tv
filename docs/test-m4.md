@@ -110,8 +110,8 @@ Approve a video that does not allow embedding and play it. Expected: the player 
 Press OK to open it in the YouTube app" (log `room: player error …`; write down which error: `VIDEO_NOT_PLAYABLE_IN_EMBEDDED_PLAYER`
 or `UNKNOWN` (YouTube's 153)). OK opens the YouTube app on that video (log `opened the YouTube app (vnd.youtube)` or
 `(https)`). Press Back in the YouTube app and move around: it lets you. That is the limit, see the limits page.
-Also write down: does an ordinary video give error 153 in the in-app player on this TV? If so, the IFrame player needs a
-different `origin` (open question in the PR).
+Also write down: does an ordinary video give error 153 (a missing or untrusted referer) in the in-app player on this TV? The
+player's origin is the library's default, `https://www.youtube.com`, so it should not; if it does, say so in the PR.
 
 ## 8. Old and new, side by side (protocol v1 and v2)
 

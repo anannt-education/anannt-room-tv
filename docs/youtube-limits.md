@@ -31,7 +31,7 @@ What it cannot do:
   The end-of-video grid is covered by the cue-again trick for a single video. At the end of a playlist, and for a few
   seconds when a video is paused, YouTube may still draw a same-channel suggestion over the picture. It cannot be
   clicked (no key reaches the page), but it can be seen.
-- An embed shows what the video's owner allows. Some videos refuse to play in an embed (YouTube error 101, 150 or 153).
+- An embed shows what the video's owner allows. Some videos refuse to play in an embed (YouTube error 101 or 150; 153 means a referer problem and should not happen with the default origin).
   The player then says so and offers OK to open the item in the YouTube app (below).
 - Ads: YouTube may show ads in an embed, as it does anywhere. This app does not and cannot block them.
 - Age-restricted or members-only videos do not play in an embed.
