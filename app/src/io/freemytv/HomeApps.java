@@ -57,6 +57,8 @@ final class HomeApps {
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
+    /** Room TV build only: the "Videos" tile, the approved YouTube list (a screen of ours, not an app). */
+    static final int ROOM_VIDEOS = 8;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -116,6 +118,15 @@ final class HomeApps {
             "com.disney.starplus",                  // Star+ (merged into Disney+)
             "com.tcl.exhibit"));                    // TCL: T-Exhibition
 
+    /**
+     * Room TV build only: apps kept out of the shelf, "All Apps" and the shelf picker, because the curated list replaces
+     * them. They stay installed and enabled (nothing is disabled): the original home screen shows them again, and so
+     * does a plain build.sh build of this launcher, so restoring the home screen needs nothing extra.
+     */
+    static final Set<String> ROOM_HIDDEN = new HashSet<>(java.util.Arrays.asList(
+            "com.google.android.youtube.tv",        // YouTube on Google TV / Android TV
+            "com.google.android.youtube"));         // YouTube on tablets and a few TVs
+
     private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
     private static final Map<String, Bitmap> LOGOS = new HashMap<>();   // key → colored logo with no background
 
@@ -126,8 +137,12 @@ final class HomeApps {
     static List<Item> shelf(Context c, boolean extract) {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
+        // Room TV build: the YouTube app is replaced by the approved list, first on the shelf.
+        boolean room = Room.available(c);
+        if (room) items.add(videosTile(c));
         for (String pkg : shelfPackages(c)) {
             if (items.size() >= MAX_SHELF) break;
+            if (room && ROOM_HIDDEN.contains(pkg)) continue;
             Intent launch = launchIntent(pm, pkg);
             if (launch == null) continue;
             ResolveInfo ri = pm.resolveActivity(launch, 0);
@@ -174,10 +189,11 @@ final class HomeApps {
         PackageManager pm = c.getPackageManager();
         List<String[]> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (String[] d : SHELF) if (launchIntent(pm, d[2]) != null && seen.add(d[2])) out.add(new String[] {d[2], d[1]});
+        boolean room = Room.available(c);
+        for (String[] d : SHELF) if (launchIntent(pm, d[2]) != null && !(room && ROOM_HIDDEN.contains(d[2])) && seen.add(d[2])) out.add(new String[] {d[2], d[1]});
         List<String[]> more = new ArrayList<>();
         for (String[] app : launchable(c)) {
-            if (app[0].equals(c.getPackageName()) || HIDDEN.contains(app[0]) || !seen.add(app[0])) continue;
+            if (app[0].equals(c.getPackageName()) || HIDDEN.contains(app[0]) || (Room.available(c) && ROOM_HIDDEN.contains(app[0])) || !seen.add(app[0])) continue;
             more.add(app);
         }
         Collections.sort(more, (a, b) -> a[1].toLowerCase(Locale.ROOT).compareTo(b[1].toLowerCase(Locale.ROOT)));
@@ -376,6 +392,7 @@ final class HomeApps {
         skip.addAll(java.util.Arrays.asList(LIVE_TV_APPS));
         skip.add(c.getPackageName());
         skip.addAll(HIDDEN);
+        if (Room.available(c)) skip.addAll(ROOM_HIDDEN);
         List<Item> items = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (String[] app : launchable(c)) {
@@ -395,6 +412,25 @@ final class HomeApps {
         }
         items.add(special(c, SETTINGS, "freemytv-settings", "Free My TV", "sparkles"));
         return items;
+    }
+
+    /** The shelf's "Videos" card: the play symbol and the word, on the same dark glass as the other special cards. */
+    private static synchronized Item videosTile(Context c) {
+        Item it = shortcut(ROOM_VIDEOS, "room-videos", Ui.tr("Videos"), "play");
+        String cacheKey = "room-videos|" + it.label;
+        Bitmap b = TILES.get(cacheKey);
+        if (b == null) {
+            b = darkTile();
+            Canvas canvas = new Canvas(b);
+            Symbols.draw(c, canvas, "play", TILE_W / 2f, TILE_H * 0.40f, TILE_H * 0.30f, 0xF2FFFFFF);
+            Paint text = Ui.text(Ui.semibold, TILE_H * 0.15f, 0xF2FFFFFF);
+            text.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText(it.label, TILE_W / 2f, TILE_H * 0.86f, text);
+            b.setHasMipMap(true);
+            TILES.put(cacheKey, b);
+        }
+        it.tile = b;
+        return it;
     }
 
     private static Item special(Context c, int kind, String key, String label, String symbol) {
@@ -426,6 +462,9 @@ final class HomeApps {
                 break;
             case ANDROID_SETTINGS:
                 intent = new Intent(Settings.ACTION_SETTINGS);
+                break;
+            case ROOM_VIDEOS:
+                intent = new Intent().setClassName(a, Room.VIDEOS);
                 break;
             default:
                 return false;

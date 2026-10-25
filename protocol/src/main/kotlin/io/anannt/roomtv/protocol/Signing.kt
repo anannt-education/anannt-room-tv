@@ -12,23 +12,24 @@ object Signatures {
         Crypto.constantTimeEquals(compute(secret, e.v, e.deviceId, e.ts, e.nonce, e.type, e.body), e.sig)
 }
 
-/** Signs outgoing envelopes for one key: the phone signs as its deviceId, the TV signs replies as its tvId. */
+/** Signs outgoing envelopes for one key: the phone signs as its deviceId, the TV signs replies as its tvId. [version] is the envelope version used unless a call says otherwise. */
 class CommandSigner(
     private val secret: ByteArray,
     private val signerId: String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val nonces: () -> String = Crypto::newNonce,
+    @Volatile var version: Int = PROTOCOL_VERSION,
 ) {
-    fun sign(type: String, body: String): Envelope {
+    /** [v] defaults to [version]; a reply uses the version of the command it answers, so an older phone can read it. */
+    fun sign(type: String, body: String, v: Int = version): Envelope {
         val ts = clock()
         val nonce = nonces()
-        return Envelope(PROTOCOL_VERSION, signerId, ts, nonce, type, body,
-            Signatures.compute(secret, PROTOCOL_VERSION, signerId, ts, nonce, type, body))
+        return Envelope(v, signerId, ts, nonce, type, body, Signatures.compute(secret, v, signerId, ts, nonce, type, body))
     }
 }
 
 /**
- * Checks incoming envelopes: version, a known signer, a timestamp within [maxSkewMs] of now, the signature, and a
+ * Checks incoming envelopes: version (MIN_PROTOCOL_VERSION..PROTOCOL_VERSION), a known signer, a timestamp within [maxSkewMs] of now, the signature, and a
  * nonce not seen before (replay). The nonce is recorded only after the signature passed, so nobody can burn a nonce
  * for someone else. Nonces older than twice the window are forgotten: a message that old is refused as stale anyway.
  */
@@ -54,7 +55,7 @@ class CommandVerifier(
 
     @Synchronized
     fun verify(e: Envelope): Result {
-        if (e.v != PROTOCOL_VERSION) return Result.Rejected(BAD_VERSION)
+        if (e.v !in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION) return Result.Rejected(BAD_VERSION)
         val secret = secretFor(e.deviceId) ?: return Result.Rejected(UNKNOWN_DEVICE)
         val now = clock()
         if (e.ts > now + maxSkewMs || e.ts < now - maxSkewMs) return Result.Rejected(STALE)

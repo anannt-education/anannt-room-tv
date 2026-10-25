@@ -7,7 +7,7 @@ import kotlinx.serialization.encodeToString
 /** What the TV's QR code says. The phone needs nothing else to pair. */
 @Serializable
 data class PairingQr(
-    val v: Int = PROTOCOL_VERSION,
+    val v: Int = PAIRING_VERSION,
     val tvId: String,
     val name: String,
     val ip: String,
@@ -20,7 +20,7 @@ data class PairingQr(
         /** Reads a scanned code; null when it isn't ours or isn't v1. */
         fun decode(text: String): PairingQr? {
             val qr = runCatching { ProtocolJson.decodeFromString(serializer(), text) }.getOrNull() ?: return null
-            if (qr.v != PROTOCOL_VERSION) return null
+            if (qr.v !in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION) return null
             if (qr.tvId.isBlank() || qr.ip.isBlank() || qr.pairToken.isBlank()) return null
             if (qr.port !in 1..65535) return null
             return qr
@@ -34,7 +34,7 @@ data class PairingQr(
  */
 @Serializable
 data class PairRequest(
-    val v: Int = PROTOCOL_VERSION,
+    val v: Int = PAIRING_VERSION,
     val deviceId: String,
     val deviceName: String,
     val clientNonce: String,
@@ -44,7 +44,7 @@ data class PairRequest(
 /** The TV's answer: its nonce, and a confirmation under the derived secret so the phone knows both sides agree. */
 @Serializable
 data class PairResponse(
-    val v: Int = PROTOCOL_VERSION,
+    val v: Int = PAIRING_VERSION,
     val tvId: String,
     val tvName: String,
     val tvNonce: String,
@@ -85,6 +85,8 @@ data class Welcome(
     val serverTime: Long,
     /** True when the TV's optional Remote Control service is on, so Back, Home and the D-pad reach other apps. */
     val remoteControl: Boolean = false,
+    /** The newest envelope version this TV speaks. Absent (an older TV) means 1. The phone uses the lower of the two. */
+    val protocol: Int = 1,
 )
 
 @Serializable

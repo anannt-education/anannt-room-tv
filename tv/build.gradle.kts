@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 val launcher = rootProject.file("app")
@@ -159,6 +160,12 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
 
     implementation(libs.zxing.core)
+
+    // M4: the approved list (Room) and the in-app player (IFrame player in a WebView, with playlists).
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+    implementation(libs.youtube.player)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -29,7 +29,7 @@ class SigningTest {
     @Test
     fun `the signature is a plain hmac over the canonical lines`() {
         val e = signer.sign("hello", """{"deviceName":"Pixel"}""")
-        val canonical = "1\nphone-1\n$now\nn0\nhello\n{\"deviceName\":\"Pixel\"}"
+        val canonical = "2\nphone-1\n$now\nn0\nhello\n{\"deviceName\":\"Pixel\"}"
         val expected = Crypto.b64url(Crypto.hmacSha256(secret, canonical.toByteArray()))
         assertEquals(expected, e.sig)
     }
@@ -52,9 +52,33 @@ class SigningTest {
     }
 
     @Test
-    fun `another protocol version is refused`() {
+    fun `a version outside the supported range is refused`() {
         val e = signer.sign("ping", "{}")
-        assertEquals(CommandVerifier.BAD_VERSION, rejected(verifier.verify(e.copy(v = 2))))
+        assertEquals(CommandVerifier.BAD_VERSION, rejected(verifier.verify(e.copy(v = PROTOCOL_VERSION + 1))))
+        assertEquals(CommandVerifier.BAD_VERSION, rejected(verifier.verify(e.copy(v = MIN_PROTOCOL_VERSION - 1))))
+    }
+
+    @Test
+    fun `a v1 envelope signed the v1 way is still accepted`() {
+        val e = signer.sign("ping", "{}", v = 1)
+        assertEquals(1, e.v)
+        val canonical = "1\nphone-1\n$now\nn0\nping\n{}"
+        assertEquals(Crypto.b64url(Crypto.hmacSha256(secret, canonical.toByteArray())), e.sig)
+        assertTrue(verifier.verify(e) is CommandVerifier.Result.Ok)
+    }
+
+    @Test
+    fun `the version is part of the signature, so it cannot be changed on the way`() {
+        val e = signer.sign("ping", "{}", v = 1)
+        assertEquals(CommandVerifier.BAD_SIGNATURE, rejected(verifier.verify(e.copy(v = 2))))
+    }
+
+    @Test
+    fun `a signer can be told which version to speak`() {
+        signer.version = 1
+        assertEquals(1, signer.sign("ping", "{}").v)
+        signer.version = PROTOCOL_VERSION
+        assertEquals(PROTOCOL_VERSION, signer.sign("ping", "{}").v)
     }
 
     @Test

@@ -27,4 +27,28 @@ public final class RoomText {
     public static String remoteControlIsOff() { return Ui.tr("Remote Control is off"); }
     public static String remoteControlTurnOn() { return Ui.tr("To turn it on, run this on a computer connected to this TV:"); }
     public static String remoteControlTurnOff() { return Ui.tr("To turn it off again, run:"); }
+
+    // M4: curated YouTube
+    public static String videos() { return Ui.tr("Videos"); }
+    public static String approveVideo() { return Ui.tr("Approve this video?"); }
+    public static String approvePlaylist() { return Ui.tr("Approve this playlist?"); }
+    public static String approve() { return Ui.tr("Approve"); }
+    public static String reject() { return Ui.tr("Reject"); }
+    public static String noVideosYet() { return Ui.tr("No approved videos yet. Share a YouTube link from the phone to the Room TV app."); }
+    public static String videoKind() { return Ui.tr("Video"); }
+    public static String playlistKind() { return Ui.tr("Playlist"); }
+    public static String addedBy(String name) { return Ui.trf("Added by {name}", "name", name); }
+    public static String adminPin() { return Ui.tr("Admin PIN"); }
+    public static String setAdminPin() { return Ui.tr("Set an admin PIN"); }
+    public static String adminPinHint() { return Ui.tr("4 to 8 digits. The phone asks for it before it adds or removes a video."); }
+    public static String adminPinIsSet() { return Ui.tr("An admin PIN is set. If it is forgotten, reset it here and then set a new one."); }
+    public static String confirmPin() { return Ui.tr("Type it again to confirm"); }
+    public static String pinsDiffer() { return Ui.tr("The two PINs are different. Start again."); }
+    public static String resetPin() { return Ui.tr("Reset PIN"); }
+    public static String pressAgainToReset() { return Ui.tr("Press again to reset"); }
+    public static String delete() { return Ui.tr("Delete"); }
+    public static String playerKeys() { return Ui.tr("OK: play or pause   Left, Right: skip 10 s   Up, Down: previous, next   Back: stop"); }
+    public static String cannotPlayHere() { return Ui.tr("This video can't be played here."); }
+    public static String openInYoutubeApp() { return Ui.tr("Press OK to open it in the YouTube app"); }
+    public static String youtubeMissing() { return Ui.tr("The YouTube app is not installed on this TV."); }
 }

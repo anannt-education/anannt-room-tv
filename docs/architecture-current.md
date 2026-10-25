@@ -100,8 +100,7 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
 
 - M2 Zoom: built, see section 6.
 - M3 remote: built, see section 7.
-- M4 YouTube: Room DB in `io.freemytv.room`, `yt.play` after the whitelist check, and `HomeApps.HIDDEN` for the
-  YouTube tile.
+- M4 YouTube: built, see section 8.
 - M5: calendar on the phone, idle screen, auto-reconnect in `TvConnection`, guest QR on `HomeView`.
 
 ## 6. Zoom push (M2)
@@ -160,3 +159,38 @@ the one to install for Room TV. `.github/workflows/gradle.yml` runs `:protocol:t
   failures such as a revoked phone are not retried).
 - `docs/remote-limits.md` is the honest account of what Android allows; `docs/test-m3.md` is the test script.
 
+
+## 8. Curated YouTube (M4)
+
+```
+ PHONE  share / paste a YouTube link ──▶ YouTubeParser.check (:protocol, tested) ──▶ YouTubeSend (admin PIN field)
+        whitelist.add{kind,id,pin} | whitelist.remove{kind,id,pin} | whitelist.list | yt.play{kind,id}      protocol v2, signed
+        ◀── signed `ack` {ok, detail, triesLeft, waitMs}   ◀── `whitelist` {items, pinSet, locked}   ◀── pushed `whitelist.result`
+ TV   RoomHandler: verify (HMAC, 30 s, nonce, version 1..2) ─▶ v2-only commands refused on a v1 envelope
+        whitelist.add    ─▶ validate the ref ─▶ PinGuard.verify ─▶ already listed? ─▶ RoomRuntime.askApproval
+                              ─▶ VideoApproveActivity ("Approve this video?", oEmbed title and thumbnail if reachable)
+                              OK ─▶ Whitelist.add ─▶ Room table ─▶ push whitelist.result;  Back or leaving ─▶ rejected / cancelled
+        whitelist.remove ─▶ validate ─▶ PinGuard.verify ─▶ Whitelist.remove
+        yt.play          ─▶ validate ─▶ Whitelist.isAllowed ─▶ RoomRuntime.playVideo ─▶ VideoPlayerActivity (checks the list again)
+ Home shelf: "Videos" card first ─▶ VideosActivity (approved items only); the YouTube app is not drawn (HomeApps.ROOM_HIDDEN)
+```
+
+- `:protocol` `YouTube.kt`: `YtRef`, `YouTubeParser`, the payloads, `WhitelistStore` + `Whitelist` (the rules: valid IDs only, no
+  duplicates, allowed only if listed). `AdminPin.kt`: `PinHasher` (PBKDF2-HMAC-SHA256, 100,000 rounds, 16-byte salt) and
+  `PinGuard` (set, verify, clear, lockout kept in the same storage). All JVM-tested.
+- Protocol v2: `PROTOCOL_VERSION = 2`, `MIN_PROTOCOL_VERSION = 1`. A signed envelope carries its version in the signature, the
+  TV accepts 1 and 2, answers each command in the version it came in, and remembers each phone's last version to push in.
+  A phone says hello as v1 (any TV takes it), reads `Welcome.protocol` (absent on an old TV means 1) and speaks the lower
+  of the two. v2-only commands on a v1 envelope get `needs-protocol-2`. The QR, `/pair` and its answer stay at version 1
+  (`PAIRING_VERSION`), so an old phone can still pair with a new TV.
+- TV: `VideoDb.kt` (Room table `whitelist` in `databases/room-videos.db`: type, id, title, addedAt, addedBy; primary key type+id; IGNORE
+  on a duplicate), `AdminPin.kt` (`PrefsPinStorage`, `commit()`), `OEmbed.kt`, `VideoApproveActivity`, `VideosActivity`,
+  `AdminPinActivity`, `VideoPlayerActivity`, `YouTubeApp`. Room runs through KSP; the player is
+  `com.pierfrancescosoffritti.androidyoutubeplayer:core:12.1.2` (13.0.0 needs a newer compileSdk than this build uses).
+- Launcher (Java): `HomeApps.ROOM_VIDEOS` card first on the shelf, `ROOM_HIDDEN` keeps the YouTube packages out of the shelf, All
+  Apps and the shelf picker. Only in the Gradle build (`Room.available`). Nothing is disabled, so nothing needs restoring.
+- Phone: `YouTubeScreens.kt` (`YouTubeSend`, `VideosScreen`, `PinField`), `SendPanel` (Zoom first, then YouTube), `TvConnection`
+  (`callAck`, `sendWhitelistAdd/Remove`, `sendYtPlay`, `refreshWhitelist`, version negotiation).
+- New permissions: none. INTERNET was already there (the player and oEmbed use it). `<queries>` now also names the two YouTube
+  packages (package visibility on Android 11+, names only). No new service, receiver or exported entry that takes data.
+- Details of what this does and does not hold back: `docs/youtube-limits.md`. Test script: `docs/test-m4.md`.

@@ -11,21 +11,33 @@ import io.anannt.roomtv.protocol.Envelope
 import io.anannt.roomtv.protocol.ErrorBody
 import io.anannt.roomtv.protocol.NavKeyCommand
 import io.anannt.roomtv.protocol.NavResult
+import io.anannt.roomtv.protocol.MIN_PROTOCOL_VERSION
 import io.anannt.roomtv.protocol.PROTOCOL_VERSION
 import io.anannt.roomtv.protocol.PairRequest
 import io.anannt.roomtv.protocol.PairResponse
 import io.anannt.roomtv.protocol.PairTokenIssuer
 import io.anannt.roomtv.protocol.Pairing
 import io.anannt.roomtv.protocol.Ping
+import io.anannt.roomtv.protocol.PinGuard
+import io.anannt.roomtv.protocol.PinResult
 import io.anannt.roomtv.protocol.Pong
 import io.anannt.roomtv.protocol.ProtocolJson
 import io.anannt.roomtv.protocol.Replies
 import io.anannt.roomtv.protocol.ReturnHome
 import io.anannt.roomtv.protocol.StatusBody
 import io.anannt.roomtv.protocol.Welcome
+import io.anannt.roomtv.protocol.Whitelist
+import io.anannt.roomtv.protocol.WhitelistAdd
+import io.anannt.roomtv.protocol.WhitelistBody
+import io.anannt.roomtv.protocol.WhitelistRemove
+import io.anannt.roomtv.protocol.YOUTUBE_PROTOCOL_VERSION
+import io.anannt.roomtv.protocol.YtPlay
+import io.anannt.roomtv.protocol.YtRef
+import io.anannt.roomtv.protocol.YtResult
 import io.anannt.roomtv.protocol.ZoomJoin
 import io.anannt.roomtv.protocol.NavKey
 import io.anannt.roomtv.protocol.withRoomName
+import android.util.Log
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.encodeToString
@@ -42,6 +54,10 @@ interface RoomActions {
     fun openZoom(): Done = Done(false, NavResult.FAILED)
     /** True when the optional Remote Control service is on. */
     fun remoteControlOn(): Boolean = false
+    /** Shows "Approve this video?" for a request whose PIN was right; false when the prompt couldn't be started. */
+    fun askApproval(ref: YtRef, from: String, deviceId: String): Boolean = false
+    /** Plays an item that is on the list. The caller has already checked the list; the player checks it again. */
+    fun playVideo(ref: YtRef): Done = Done(false, YtResult.FAILED)
 
     companion object {
         val None = object : RoomActions {}
@@ -50,8 +66,8 @@ interface RoomActions {
 
 /**
  * What the TV does with what arrives: pairing, then signed commands. No Ktor here, so it can be driven from tests.
- * M2 added zoom.join to [route]; M3 adds nav.*, zoom.open, a rate limit and server-pushed events; M4 adds yt.* and
- * whitelist.*.
+ * M2 added zoom.join to [route]; M3 adds nav.*, zoom.open, a rate limit and server-pushed events; M4 adds yt.play and
+ * whitelist.* (protocol v2), a version per phone, and the admin PIN in front of every change to the list.
  */
 class RoomHandler(
     private val identity: TvIdentity,
@@ -63,6 +79,8 @@ class RoomHandler(
     /** The name Zoom shows for this room when the phone sent none (Free My TV > Room Name). */
     private val roomName: () -> String = { DEFAULT_ROOM_NAME },
     private val limits: CommandLimits = CommandLimits(clock),
+    private val videos: Whitelist,
+    private val pin: PinGuard,
 ) {
     private val verifier = CommandVerifier(secretFor = { devices.secretFor(it) }, clock = clock)
 
@@ -72,9 +90,13 @@ class RoomHandler(
     private val _pushes = MutableSharedFlow<Push>(extraBufferCapacity = 16)
     val pushes: SharedFlow<Push> get() = _pushes
 
+    /** The envelope version each phone last spoke, so what the TV pushes to it (zoom.state, whitelist.result) is one it can read. */
+    private val versions = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     fun push(deviceId: String, type: String, body: String) {
         val secret = devices.secretFor(deviceId) ?: return
-        _pushes.tryEmit(Push(deviceId, ProtocolJson.encodeToString(CommandSigner(secret, identity.tvId, clock).sign(type, body))))
+        val v = versions[deviceId] ?: MIN_PROTOCOL_VERSION
+        _pushes.tryEmit(Push(deviceId, ProtocolJson.encodeToString(CommandSigner(secret, identity.tvId, clock).sign(type, body, v))))
     }
 
     sealed class PairOutcome {
@@ -89,7 +111,7 @@ class RoomHandler(
         StatusBody(tvId = identity.tvId, tvName = identity.name, serverTime = clock(), pairedPhones = devices.all.value.size)
 
     fun pair(req: PairRequest): PairOutcome {
-        if (req.v != PROTOCOL_VERSION) return PairOutcome.Rejected("bad-version")
+        if (req.v !in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION) return PairOutcome.Rejected("bad-version")
         if (req.deviceId.isBlank() || req.deviceId.length > 64 || req.clientNonce.isBlank() || req.clientNonce.length > 64) {
             return PairOutcome.Rejected("bad-request")
         }
@@ -110,21 +132,33 @@ class RoomHandler(
             Reply(true, "", RATE_LIMITED, silent = true)
         } else {
             devices.touch(e.deviceId, clock())
+            versions[e.deviceId] = e.v
             val (type, body) = route(e)
             val secret = devices.secretFor(e.deviceId)
+            // The reply carries the version of the command it answers, so a phone that speaks v1 can still read it.
             if (secret == null) Reply(false, ProtocolJson.encodeToString(ErrorBody(CommandVerifier.UNKNOWN_DEVICE)), CommandVerifier.UNKNOWN_DEVICE)
-            else Reply(true, ProtocolJson.encodeToString(CommandSigner(secret, identity.tvId, clock).sign(type, body)), "")
+            else Reply(true, ProtocolJson.encodeToString(CommandSigner(secret, identity.tvId, clock).sign(type, body, e.v)), "")
         }
     }
 
-    private fun route(e: Envelope): Pair<String, String> = when (e.type) {
-        Commands.HELLO -> Replies.WELCOME to ProtocolJson.encodeToString(Welcome(identity.tvId, identity.name, clock(), actions.remoteControlOn()))
+    private fun route(e: Envelope): Pair<String, String> = when {
+        e.type in Commands.V2_ONLY && e.v < YOUTUBE_PROTOCOL_VERSION ->
+            Replies.ACK to ProtocolJson.encodeToString(Ack(e.type, false, YtResult.NEEDS_V2))
+        else -> routeKnown(e)
+    }
+
+    private fun routeKnown(e: Envelope): Pair<String, String> = when (e.type) {
+        Commands.HELLO -> Replies.WELCOME to ProtocolJson.encodeToString(Welcome(identity.tvId, identity.name, clock(), actions.remoteControlOn(), PROTOCOL_VERSION))
         Commands.PING -> Replies.PONG to ProtocolJson.encodeToString(Pong(e.decodeBody<Ping>()?.sentAt ?: 0L, clock()))
         Commands.STATUS -> Replies.STATUS to ProtocolJson.encodeToString(status())
         Commands.ZOOM_JOIN -> Replies.ACK to ProtocolJson.encodeToString(zoomJoin(e))
         Commands.ZOOM_OPEN -> Replies.ACK to ProtocolJson.encodeToString(actions.openZoom().let { Ack(Commands.ZOOM_OPEN, it.ok, it.detail) })
         Commands.NAV_KEY -> Replies.ACK to ProtocolJson.encodeToString(navKey(e))
         Commands.NAV_RETURN_HOME -> Replies.ACK to ProtocolJson.encodeToString(returnHome(e))
+        Commands.YT_PLAY -> Replies.ACK to ProtocolJson.encodeToString(ytPlay(e))
+        Commands.WHITELIST_LIST -> Replies.WHITELIST to ProtocolJson.encodeToString(WhitelistBody(videos.items(), pin.isSet, pin.lockedForMs()))
+        Commands.WHITELIST_ADD -> Replies.ACK to ProtocolJson.encodeToString(whitelistAdd(e))
+        Commands.WHITELIST_REMOVE -> Replies.ACK to ProtocolJson.encodeToString(whitelistRemove(e))
         else -> Replies.ERROR to ProtocolJson.encodeToString(ErrorBody("unknown-command:" + e.type))
     }
 
@@ -146,7 +180,48 @@ class RoomHandler(
         return actions.returnHome(body.endMeeting, e.deviceId).let { Ack(Commands.NAV_RETURN_HOME, it.ok, it.detail) }
     }
 
+    /** yt.play: only what is on the list, whatever the phone says. The ID is checked for shape, then looked up. */
+    private fun ytPlay(e: Envelope): Ack {
+        val body = e.decodeBody<YtPlay>() ?: return Ack(Commands.YT_PLAY, false, YtResult.BAD_REQUEST)
+        val ref = YtRef(body.kind, body.id).validated() ?: return Ack(Commands.YT_PLAY, false, YtResult.BAD_ITEM)
+        if (!videos.isAllowed(ref)) {
+            Log.i(TAG, "room: yt.play refused, not on the list (${ref.kind})")
+            return Ack(Commands.YT_PLAY, false, YtResult.NOT_APPROVED)
+        }
+        return actions.playVideo(ref).let { Ack(Commands.YT_PLAY, it.ok, it.detail) }
+    }
+
+    /** whitelist.add: the PIN first, then the question on the TV. Nothing is added here: OK on the TV adds it. */
+    private fun whitelistAdd(e: Envelope): Ack {
+        val req = e.decodeBody<WhitelistAdd>() ?: return Ack(Commands.WHITELIST_ADD, false, YtResult.BAD_REQUEST)
+        val ref = YtRef(req.kind, req.id).validated() ?: return Ack(Commands.WHITELIST_ADD, false, YtResult.BAD_ITEM)
+        pinRefusal(Commands.WHITELIST_ADD, req.pin)?.let { return it }
+        if (videos.isAllowed(ref)) return Ack(Commands.WHITELIST_ADD, true, YtResult.ALREADY_APPROVED)
+        val from = devices.all.value.firstOrNull { it.deviceId == e.deviceId }?.name ?: "Phone"
+        return if (actions.askApproval(ref, from, e.deviceId)) Ack(Commands.WHITELIST_ADD, true, YtResult.SHOWN)
+        else Ack(Commands.WHITELIST_ADD, false, YtResult.COULD_NOT_SHOW)
+    }
+
+    private fun whitelistRemove(e: Envelope): Ack {
+        val req = e.decodeBody<WhitelistRemove>() ?: return Ack(Commands.WHITELIST_REMOVE, false, YtResult.BAD_REQUEST)
+        val ref = YtRef(req.kind, req.id).validated() ?: return Ack(Commands.WHITELIST_REMOVE, false, YtResult.BAD_ITEM)
+        pinRefusal(Commands.WHITELIST_REMOVE, req.pin)?.let { return it }
+        return if (videos.remove(ref)) Ack(Commands.WHITELIST_REMOVE, true, YtResult.REMOVED) else Ack(Commands.WHITELIST_REMOVE, false, YtResult.NOT_ON_LIST)
+    }
+
+    /** Null when the PIN is right; otherwise the refusal to send. Never logs the PIN. */
+    private fun pinRefusal(command: String, given: String): Ack? = when (val r = pin.verify(given)) {
+        PinResult.Ok -> null
+        PinResult.NotSet -> Ack(command, false, YtResult.PIN_NOT_SET)
+        is PinResult.Locked -> Ack(command, false, YtResult.LOCKED, waitMs = r.remainingMs)
+        is PinResult.Wrong -> {
+            Log.w(TAG, "room: admin PIN wrong for $command, ${r.triesLeft} free tries left, locked ${r.lockedForMs} ms")
+            Ack(command, false, if (r.lockedForMs > 0) YtResult.LOCKED else YtResult.WRONG_PIN, triesLeft = r.triesLeft, waitMs = r.lockedForMs)
+        }
+    }
+
     companion object {
+        private const val TAG = "FreeMyTV"
         const val RATE_LIMITED = "rate-limited"
     }
 }
